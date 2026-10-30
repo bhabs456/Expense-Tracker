@@ -1,0 +1,35 @@
+# Dependencies and generated output
+node_modules/
+.next/
+out/
+dist/
+coverage/
+*.tsbuildinfo
+next-env.d.ts
+
+# Python environments and caches
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.venv/
+venv/
+
+# Local configuration and private data
+.env
+.env.*
+!.env.example
+backups/
+*.db
+*.sqlite
+*.sqlite3
+*.log
+
+# Local QA artifacts and editor files
+FRONTEND_TEST_REPORT.md
+frontend-audit-*
+outputs/
+work/
+.DS_Store
+.idea/
+.vscode/

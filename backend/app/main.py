@@ -1,0 +1,641 @@
+import threading
+import asyncio
+import os
+import logging
+from datetime import date
+from decimal import Decimal
+from contextlib import asynccontextmanager
+from typing import Annotated
+from fastapi import FastAPI, Depends, HTTPException, Query, Request
+from fastapi.responses import JSONResponse
+from fastapi.encoders import jsonable_encoder
+from fastapi.middleware.cors import CORSMiddleware
+from starlette.middleware.trustedhost import TrustedHostMiddleware
+from sqlalchemy import select, delete, text
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import Session
+from .db import get_db, SessionLocal
+from .models import *
+from .schemas import *
+from .finance import *
+from .catalog import CATEGORIES, PAYMENTS, SOURCES
+
+# Serialize financial operations within a process; PostgreSQL lock coordinates workers.
+mutex = threading.Lock()
+
+
+def locked_db():
+    with mutex:
+        with SessionLocal() as db:
+            try:
+                if db.bind.dialect.name == "postgresql":
+                    db.execute(text("SELECT pg_advisory_xact_lock(726202611)"))
+                yield db
+                db.commit()
+            except Exception:
+                db.rollback()
+                raise
+
+
+DB = Annotated[Session, Depends(locked_db, scope="function")]
+
+
+def billing_tick():
+    with mutex:
+        with SessionLocal.begin() as db:
+            if db.bind.dialect.name == "postgresql":
+                db.execute(text("SELECT pg_advisory_xact_lock(726202611)"))
+            process_subscriptions(db, today())
+
+
+@asynccontextmanager
+async def lifespan(app):
+    stop = asyncio.Event()
+
+    async def worker():
+        while not stop.is_set():
+            try:
+                await asyncio.to_thread(billing_tick)
+            except Exception:
+                logging.getLogger(__name__).exception(
+                    "Subscription processing failed; retrying in 60 seconds"
+                )
+            try:
+                await asyncio.wait_for(stop.wait(), timeout=60)
+            except asyncio.TimeoutError:
+                pass
+
+    task = (
+        None
+        if os.getenv("SUBSCRIPTION_WORKER_DISABLED") == "1"
+        else asyncio.create_task(worker())
+    )
+    yield
+    stop.set()
+    if task:
+        await task
+
+
+app = FastAPI(title="Personal Expense Tracker", version="1.0.0", lifespan=lifespan)
+app.add_middleware(
+    TrustedHostMiddleware,
+    allowed_hosts=["localhost", "127.0.0.1", "testserver", "backend"],
+)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
+    allow_methods=["GET", "POST", "PATCH", "DELETE"],
+    allow_headers=["Content-Type"],
+)
+
+
+@app.middleware("http")
+async def local_origin(request, call_next):
+    origin = request.headers.get("origin")
+    if (
+        request.method not in ("GET", "HEAD", "OPTIONS")
+        and origin
+        and origin not in ("http://localhost:3000", "http://127.0.0.1:3000")
+    ):
+        return JSONResponse({"detail": "Untrusted request origin"}, status_code=403)
+    response = await call_next(request)
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
+@app.exception_handler(IntegrityError)
+async def integrity_error(request, exc):
+    return JSONResponse(
+        {
+            "detail": "Record conflicts with existing data. Check unique months and linked records."
+        },
+        status_code=409,
+    )
+
+
+def fail(message, code=422):
+    raise HTTPException(code, jsonable_encoder(message))
+
+
+def get(db, cls, id):
+    obj = db.get(cls, id)
+    if obj is None:
+        fail("Record not found", 404)
+    return obj
+
+
+def valid_expense(p, savings=False):
+    if p.date < START:
+        fail("Tracking begins November 1, 2026")
+    allowed = (
+        SOURCES if savings and getattr(p, "type", None) == "credit" else CATEGORIES
+    )
+    if p.category not in allowed:
+        fail("Choose a predefined category")
+    if p.payment_method not in PAYMENTS:
+        fail("Choose a predefined payment method")
+    if (
+        p.subcategory
+        and p.category in CATEGORIES
+        and p.subcategory not in CATEGORIES[p.category]
+    ):
+        fail("Choose a subcategory belonging to the category")
+
+
+def negative_guard(db, confirmed):
+    db.flush()
+    if not confirmed and any(r["running_balance"] < 0 for r in ledger(db)):
+        fail(
+            {
+                "code": "negative_savings",
+                "message": "This change produces a negative historical savings balance. Confirm to continue.",
+            },
+            409,
+        )
+
+
+def duplicate(db, p, exclude=None):
+    stmt = select(Expense).where(
+        Expense.date == p.date,
+        Expense.amount == p.amount,
+        Expense.category == p.category,
+        Expense.payment_method == p.payment_method,
+    )
+    if exclude:
+        stmt = stmt.where(Expense.id != exclude)
+    return list(db.scalars(stmt))
+
+
+def apply(obj, p):
+    for k, v in p.items():
+        setattr(obj, k, v)
+    return obj
+
+
+def parse_month(value):
+    try:
+        d = date.fromisoformat(value + "-01")
+        if d < START:
+            fail("History starts November 2026")
+        return d
+    except ValueError:
+        fail("Use month format YYYY-MM")
+
+
+@app.get("/api/v1/health")
+def health(db: DB):
+    db.execute(text("SELECT 1"))
+    return {"status": "ok"}
+
+
+@app.get("/api/v1/catalog")
+def catalog():
+    return {
+        "categories": CATEGORIES,
+        "payment_methods": PAYMENTS,
+        "savings_sources": SOURCES,
+        "tracking_start": START,
+        "today": today(),
+    }
+
+
+@app.get("/api/v1/settings")
+def read_settings(db: DB):
+    return record(settings(db))
+
+
+@app.patch("/api/v1/settings")
+def edit_settings(p: SettingsIn, db: DB):
+    if p.default_payment_method not in PAYMENTS:
+        fail("Invalid payment method")
+    return record(apply(settings(db), p.model_dump()))
+
+
+@app.get("/api/v1/dashboard")
+def dashboard(db: DB, month: str | None = None):
+    process_subscriptions(db, today())
+    d = parse_month(month) if month else max(START, today().replace(day=1))
+    summary = monthly(db, d)
+    rows = [r for r in expense_rows(db) if r["date"].replace(day=1) == d]
+    cfg = settings(db)
+    return {
+        **summary,
+        "today_spending": sum(
+            (r["net_amount"] for r in rows if r["date"] == today()), ZERO
+        ),
+        "recent": rows[:5],
+        "accumulated_savings": savings_summary(db, today())["accumulated"],
+        "minimum_goal": (
+            summary["budget"] * cfg.minimum_savings_percent / 100
+        ).quantize(Decimal(".01")),
+        "stretch_goal": (
+            summary["budget"] * cfg.stretch_savings_percent / 100
+        ).quantize(Decimal(".01")),
+        "tracking_open": today() >= START,
+    }
+
+
+@app.get("/api/v1/expenses")
+def expenses(
+    db: DB,
+    search: str = "",
+    start: date | None = None,
+    end: date | None = None,
+    category: str = "",
+    payment_method: str = "",
+    page: int = Query(1, ge=1),
+):
+    rows = filtered(expense_rows(db), search, start, end, category, payment_method)
+    return {
+        "items": rows[(page - 1) * 20 : page * 20],
+        "total": len(rows),
+        "page": page,
+        "page_size": 20,
+    }
+
+
+def filtered(rows, search, start, end, category, payment_method, type=""):
+    return [
+        r
+        for r in rows
+        if (
+            not search
+            or search.lower()
+            in " ".join(
+                str(r.get(k, ""))
+                for k in (
+                    "notes",
+                    "category",
+                    "subcategory",
+                    "amount",
+                    "payment_method",
+                )
+            ).lower()
+        )
+        and (not start or r["date"] >= start)
+        and (not end or r["date"] <= end)
+        and (not category or r["category"] == category)
+        and (not payment_method or r["payment_method"] == payment_method)
+        and (not type or r["type"] == type)
+    ]
+
+
+@app.post("/api/v1/expenses/batch", status_code=201)
+def add_batch(p: BatchIn, db: DB):
+    warnings = []
+    seen = set()
+    for row in p.items:
+        valid_expense(row)
+        key = (
+            row.date,
+            row.amount,
+            row.category,
+            row.payment_method,
+            row.savings_funded,
+        )
+        if not row.savings_funded and (duplicate(db, row) or key in seen):
+            warnings.append(row.model_dump(mode="json"))
+        seen.add(key)
+    if warnings and not p.confirm_duplicates:
+        fail(
+            {
+                "code": "duplicates",
+                "message": "Possible duplicate expenses. Save anyway?",
+                "items": warnings,
+            },
+            409,
+        )
+    result = []
+    for row in p.items:
+        values = row.model_dump(exclude={"savings_funded"})
+        obj = (
+            SavingsTransaction(**values, type="debit")
+            if row.savings_funded
+            else Expense(**values)
+        )
+        db.add(obj)
+        db.flush()
+        result.append(record(obj))
+    if any(r.savings_funded for r in p.items):
+        negative_guard(db, p.confirm_negative_savings)
+    return {"items": result}
+
+
+@app.patch("/api/v1/expenses/{id}")
+def edit_expense(id: int, p: ExpenseIn, db: DB, confirm_duplicates: bool = False):
+    valid_expense(p)
+    e = get(db, Expense, id)
+    refunded = sum(
+        (r.amount for r in db.scalars(select(Refund).where(Refund.expense_id == id))),
+        ZERO,
+    )
+    if p.amount < refunded:
+        fail("Amount cannot be lower than existing refunds")
+    if any(
+        r.date < p.date
+        for r in db.scalars(select(Refund).where(Refund.expense_id == id))
+    ):
+        fail("Expense cannot be dated after its refund")
+    if duplicate(db, p, id) and not confirm_duplicates:
+        fail({"code": "duplicates", "message": "Possible duplicate. Save anyway?"}, 409)
+    return record(apply(e, p.model_dump()))
+
+
+@app.delete("/api/v1/expenses/{id}")
+def delete_expense(id: int, db: DB, confirm: bool = False):
+    e = get(db, Expense, id)
+    refunds = list(db.scalars(select(Refund).where(Refund.expense_id == id)))
+    if not confirm:
+        fail(
+            {
+                "code": "delete_confirmation",
+                "message": f"Delete expense and its {len(refunds)} linked refunds? This also affects historical savings.",
+            },
+            409,
+        )
+    for o in db.scalars(select(Occurrence).where(Occurrence.expense_id == id)):
+        o.state = "deleted"
+        o.expense_id = None
+    for r in refunds:
+        db.delete(r)
+    db.flush()
+    db.delete(e)
+    return {"deleted": True}
+
+
+@app.post("/api/v1/expenses/{id}/refunds", status_code=201)
+def add_refund(id: int, p: RefundIn, db: DB):
+    e = get(db, Expense, id)
+    if p.date < e.date or p.date > today():
+        fail("Refund date must be between expense date and today")
+    total = sum(
+        (r.amount for r in db.scalars(select(Refund).where(Refund.expense_id == id))),
+        ZERO,
+    )
+    if total + p.amount > e.amount:
+        fail("Total refunds cannot exceed the original expense")
+    r = Refund(expense_id=id, **p.model_dump())
+    db.add(r)
+    db.flush()
+    return record(r)
+
+
+@app.delete("/api/v1/refunds/{id}")
+def remove_refund(id: int, db: DB, confirm: bool = False):
+    if not confirm:
+        fail("Confirm refund deletion", 409)
+    db.delete(get(db, Refund, id))
+    return {"deleted": True}
+
+
+@app.get("/api/v1/stipends")
+def stipends(db: DB):
+    return [
+        record(s)
+        for s in db.scalars(select(Stipend).order_by(Stipend.earning_month.desc()))
+    ]
+
+
+@app.post("/api/v1/stipends", status_code=201)
+def add_stipend(p: StipendIn, db: DB):
+    if p.earning_month < shift(START, -1):
+        fail("First earning month is October 2026")
+    s = Stipend(**p.model_dump())
+    db.add(s)
+    db.flush()
+    return record(s)
+
+
+@app.patch("/api/v1/stipends/{id}")
+def edit_stipend(id: int, p: StipendIn, db: DB):
+    if p.earning_month < shift(START, -1):
+        fail("First earning month is October 2026")
+    return record(apply(get(db, Stipend, id), p.model_dump()))
+
+
+@app.delete("/api/v1/stipends/{id}")
+def remove_stipend(id: int, db: DB, confirm: bool = False):
+    if not confirm:
+        fail("Confirm stipend deletion and historical recalculation", 409)
+    db.delete(get(db, Stipend, id))
+    return {"deleted": True}
+
+
+@app.get("/api/v1/savings/summary")
+def savings(db: DB):
+    return {**savings_summary(db, today()), "settings": record(settings(db))}
+
+
+@app.get("/api/v1/savings/transactions")
+def transactions(
+    db: DB,
+    search: str = "",
+    start: date | None = None,
+    end: date | None = None,
+    category: str = "",
+    payment_method: str = "",
+    type: str = "",
+    page: int = Query(1, ge=1),
+):
+    rows = list(
+        reversed(
+            filtered(ledger(db), search, start, end, category, payment_method, type)
+        )
+    )
+    return {
+        "items": rows[(page - 1) * 20 : page * 20],
+        "total": len(rows),
+        "page": page,
+        "page_size": 20,
+    }
+
+
+@app.post("/api/v1/savings/transactions", status_code=201)
+def add_transaction(p: SavingsIn, db: DB):
+    valid_expense(p, True)
+    t = SavingsTransaction(**p.model_dump(exclude={"confirm_negative_savings"}))
+    db.add(t)
+    db.flush()
+    negative_guard(db, p.confirm_negative_savings)
+    return record(t)
+
+
+@app.patch("/api/v1/savings/transactions/{id}")
+def edit_transaction(id: int, p: SavingsIn, db: DB):
+    valid_expense(p, True)
+    t = get(db, SavingsTransaction, id)
+    apply(t, p.model_dump(exclude={"confirm_negative_savings"}))
+    negative_guard(db, p.confirm_negative_savings)
+    return record(t)
+
+
+@app.delete("/api/v1/savings/transactions/{id}")
+def remove_transaction(
+    id: int, db: DB, confirm: bool = False, confirm_negative_savings: bool = False
+):
+    if not confirm:
+        fail("Confirm savings transaction deletion", 409)
+    db.delete(get(db, SavingsTransaction, id))
+    negative_guard(db, confirm_negative_savings)
+    return {"deleted": True}
+
+
+@app.get("/api/v1/calendar")
+def calendar_data(db: DB, month: str):
+    d = parse_month(month)
+    rows = [r for r in expense_rows(db) if r["date"].replace(day=1) == d]
+    return {
+        "items": rows,
+        "days": [
+            {
+                "date": day.isoformat(),
+                "total": sum((r["net_amount"] for r in rows if r["date"] == day), ZERO),
+            }
+            for day in sorted({r["date"] for r in rows})
+        ],
+    }
+
+
+@app.get("/api/v1/analytics")
+def analytics(db: DB, month: str):
+    d = parse_month(month)
+    rows = expense_rows(db)
+    return {
+        "selected": monthly(db, d, rows),
+        "months": [
+            monthly(db, m, rows) for m in months(max(START, shift(d, -11)), shift(d))
+        ],
+    }
+
+
+@app.post("/api/v1/subscriptions/process")
+def process(db: DB):
+    return {"generated": process_subscriptions(db, today())}
+
+
+def initial_payment_status(db, sub):
+    occurrence = db.scalar(
+        select(Occurrence).where(
+            Occurrence.subscription_id == sub.id,
+            Occurrence.billing_date == sub.start_date,
+        )
+    )
+    return {"generated": "paid", "deleted": "deleted", "skipped": "not_recorded"}.get(
+        occurrence.state if occurrence else "skipped", "not_recorded"
+    )
+
+
+@app.get("/api/v1/subscriptions")
+def subscriptions(db: DB):
+    process_subscriptions(db, today())
+    return [
+        {
+            **record(s),
+            "next_charge": next_charge(s, today()),
+            "billing_interval_days": 30,
+            "first_payment_status": initial_payment_status(db, s),
+        }
+        for s in db.scalars(select(Subscription).order_by(Subscription.id.desc()))
+    ]
+
+
+@app.post("/api/v1/subscriptions", status_code=201)
+def add_subscription(p: SubscriptionIn, db: DB):
+    if p.start_date < START:
+        fail("Subscription tracking begins November 1, 2026")
+    if p.payment_method not in PAYMENTS or p.category not in CATEGORIES:
+        fail("Invalid category or payment method")
+    if p.first_payment_made and p.start_date > today():
+        fail("An already paid charge cannot have a future date")
+    s = Subscription(
+        **p.model_dump(exclude={"first_payment_made", "existing_expense_id"}),
+        billing_day=p.start_date.day,
+    )
+    # billing_day is retained only for version-1 backup compatibility; renewals use 30-day intervals.
+    db.add(s)
+    db.flush()
+    if p.first_payment_made:
+        probe = ExpenseIn(
+            amount=p.amount,
+            date=p.start_date,
+            category=p.category,
+            payment_method=p.payment_method,
+        )
+        candidates = duplicate(db, probe)
+        e = None
+        if p.existing_expense_id:
+            e = get(db, Expense, p.existing_expense_id)
+            if e not in candidates or e.subscription_id is not None:
+                fail("Select an unlinked matching initial expense")
+        elif candidates:
+            fail(
+                {
+                    "code": "initial_payment_match",
+                    "message": "Choose an existing matching payment to avoid recording it twice.",
+                    "candidates": [record(e) for e in candidates],
+                },
+                409,
+            )
+        else:
+            e = Expense(
+                amount=s.amount,
+                date=s.start_date,
+                category=s.category,
+                payment_method=s.payment_method,
+                notes=s.name,
+            )
+            db.add(e)
+            db.flush()
+        e.subscription_id = s.id
+        db.add(
+            Occurrence(
+                subscription_id=s.id,
+                billing_date=s.start_date,
+                state="generated",
+                expense_id=e.id,
+            )
+        )
+    else:
+        # Initial payment is excluded; automatic renewals start after tracking start.
+        db.add(
+            Occurrence(subscription_id=s.id, billing_date=s.start_date, state="skipped")
+        )
+    process_subscriptions(db, today())
+    return record(s)
+
+
+@app.patch("/api/v1/subscriptions/{id}")
+def edit_subscription(id: int, p: SubscriptionEdit, db: DB):
+    if p.category not in CATEGORIES or p.payment_method not in PAYMENTS:
+        fail("Invalid category or payment method")
+    process_subscriptions(db, today())
+    return record(apply(get(db, Subscription, id), p.model_dump()))
+
+
+@app.post("/api/v1/subscriptions/{id}/{action}")
+def subscription_action(id: int, action: str, db: DB):
+    s = get(db, Subscription, id)
+    if action not in ("pause", "resume", "cancel"):
+        fail("Unknown action", 404)
+    if s.status == "canceled":
+        fail("Canceled subscriptions cannot be resumed")
+    process_subscriptions(db, today())
+    s.status = {"pause": "paused", "resume": "active", "cancel": "canceled"}[action]
+    return record(s)
+
+
+@app.delete("/api/v1/subscriptions/{id}")
+def delete_subscription(id: int, db: DB, confirm: bool = False):
+    if not confirm:
+        fail("Delete subscription? Historical expenses will be preserved.", 409)
+    s = get(db, Subscription, id)
+    for e in db.scalars(select(Expense).where(Expense.subscription_id == id)):
+        e.subscription_id = None
+    db.execute(delete(Occurrence).where(Occurrence.subscription_id == id))
+    db.delete(s)
+    return {"deleted": True}
+
+
+from .backups import install_backup_routes
+
+install_backup_routes(app, locked_db)

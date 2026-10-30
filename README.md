@@ -1,2 +1,160 @@
-# Expense-Tracker
-A personal expense tracker built with Next.js, FastAPI, PostgreSQL, and Docker to manage daily expenses, track monthly stipends, monitor savings goals, and visualize spending through interactive dashboards and analytics.
+# Paisa — Personal Expense Tracker
+
+A local-first personal expense tracker with a Next.js frontend, FastAPI backend, and PostgreSQL database. Run the complete application on your own computer with Docker Compose. No bank credentials, account registration, cloud service, or runtime internet connection is required.
+
+## Features
+
+- Ten pages: Dashboard, Add Expense, Calendar, Analytics, Savings, Savings Transactions, Subscriptions, Stipends, Expense History, Settings.
+- Stipend-funded monthly budgets: a confirmed receipt funds the month after its earning month using the actual amount received.
+- Atomic expense batches, duplicate warnings, edits, linked refunds, and confirmation before deleting expenses and refunds.
+- A separate savings ledger with credits, debits, historical balances, and recalculation after backdated changes.
+- Subscription renewals every 30 days from the tracking date, explicit initial-payment choice, catch-up processing, pause/resume, and occurrence tombstones preventing deleted charges from reappearing.
+- Search, combined filters and pagination; Indian rupee formatting; interactive Recharts analytics.
+- Complete JSON backup/restore with a safety backup before replacement.
+- Light/dark themes, responsive floating navigation, mobile drawer, keyboard-accessible date picker, and reduced-motion support.
+
+Regular spending and savings-funded transactions remain separate throughout the application. Money uses Python Decimal and PostgreSQL NUMERIC, with exact decimal strings in backups.
+
+## Requirements
+
+- Docker Desktop or Docker Engine with Docker Compose.
+- Internet access for the initial image/dependency downloads. Once images are built, normal operation is local/offline.
+
+## Quick start
+
+```sh
+git clone https://github.com/bhabs456/Expense-Tracker.git
+cd Expense-Tracker
+docker compose up -d --build
+```
+
+Open:
+
+| Service | Local address |
+| --- | --- |
+| Application | http://localhost:3000 |
+| API documentation | http://localhost:8000/docs |
+| API health | http://localhost:8000/api/v1/health |
+| PostgreSQL host port | localhost:55432 |
+
+All published ports bind to loopback. The frontend proxies `/api/v1/*` requests to FastAPI through Docker's private network. The Compose database username/password are local development defaults, not financial credentials. Keep this deployment on your own computer; multi-user authentication and public hosting are outside its scope.
+
+Later starts:
+
+```sh
+docker compose up -d
+docker compose ps
+docker compose logs --tail=50 backend frontend
+```
+
+Stop while preserving records:
+
+```sh
+docker compose stop
+```
+
+`docker compose down` also preserves the database volume. **Do not run `docker compose down -v` unless you intentionally want to erase the database.** Download a backup from Settings before maintenance.
+
+If a host port is occupied, change its left-hand value in `compose.yaml`; keep internal service addresses unchanged.
+
+## First use
+
+Tracking starts on **1 November 2026**, with zero opening savings. Transactions cannot precede tracking start or be future-dated. Calendar validation and billing use Asia/Kolkata time.
+
+1. Add a stipend with its earning month, expected amount and actual receipt details. Confirm only when received. An October 2026 earning month funds November 2026, even when received late; pending receipts contribute nothing.
+2. Add regular expenses in a batch. Select savings funding for savings-funded purchases, or create a debit in Savings Transactions. Add bonuses/gifts as credits in that ledger.
+3. Set up subscriptions. The tracking date anchors renewals at +30, +60, +90 days, independent of month-end. Choose Already paid to record/link an initial payment; choose Not paid / not recorded to omit it.
+4. Adjust savings goals, default payment method and theme in Settings.
+5. Download backups regularly and keep them somewhere safe on your device.
+
+Completed-month savings become available on the first day of the next month. Current-month projected savings are shown separately. Later refunds recalculate the original expense month. Backdated changes recalculate balances from source records. Negative historical savings balances require explicit confirmation.
+
+The subscription processor catches up at startup and every 60 seconds; the frontend also requests processing when opened. Paused periods stay skipped, and deleting a generated expense retains an occurrence tombstone. Deleting a subscription preserves historical expenses.
+
+## Backup and restore
+
+Settings → Backup now downloads all records as JSON. Restore requires a supported backup, typed confirmation, and a safety backup of current data before replacement. Automatic/local backups are stored in the project's `backups/` folder, which is excluded from Git. Database records live in Docker's persistent PostgreSQL volume.
+
+Never commit backups, database files, private environment files, or personal financial data. This repository includes application code and tests only; no personal or QA records are seeded.
+
+## Architecture
+
+```text
+Browser → Next.js :3000 → /api/v1 proxy → FastAPI :8000 → PostgreSQL
+                                            └────────→ local backups/
+```
+
+- `frontend/src/app`: App Router pages, shared layout, API proxy.
+- `frontend/src/modules`: feature components and API services.
+- `frontend/src/components`: shared inputs, charts, dialogs and navigation.
+- `frontend/src/styles`: lightweight interaction, calendar and glass navigation styles.
+- `backend/app`: API routes, schemas, models, financial calculations and backups.
+- `backend/migrations`: Alembic schema migrations.
+- `backend/tests`, `frontend/tests`: focused regression tests.
+- `compose.yaml`: frontend, backend and PostgreSQL services.
+
+No external fonts, large decorative assets or heavy animation libraries are required.
+
+## Local development
+
+Start PostgreSQL first:
+
+```sh
+docker compose up -d db
+```
+
+Backend (Python 3.14 is used by the container):
+
+```sh
+cd backend
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+alembic upgrade head
+uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
+```
+
+Frontend (Node.js 24 is used by the container), in another terminal:
+
+```sh
+cd frontend
+npm ci
+cp .env.example .env.local
+npm run dev
+```
+
+`DATABASE_URL` defaults to the local Compose database at port 55432. `BACKUP_DIR` controls local backup storage. `API_URL` is server-only, defaults to http://127.0.0.1:8000, and is set to http://backend:8000 in Compose. If macOS file watching fails, use `npm run dev -- --webpack` or build and run with `npm start`.
+
+## Tests
+
+With Docker services running:
+
+```sh
+# Disposable SQLite database per test
+docker compose exec -T backend python -m pytest -q
+
+# Optional PostgreSQL regression tests: create the disposable database once
+docker compose exec -T db createdb -U tracker tracker_test
+docker compose exec -T -e TEST_DATABASE_URL=postgresql+psycopg://tracker:tracker@db:5432/tracker_test backend python -m pytest -q
+```
+
+The test suite refuses PostgreSQL databases whose names do not end in `_test`. Tests recreate tables in that database; never use the live database as a test target.
+
+```sh
+cd frontend
+npm ci
+npm test
+npm run typecheck
+npm run format:check
+npm run build
+```
+
+Latest local checks: 33 backend tests and four frontend tests passed, along with type checking, formatting and production build. Browser checks covered all ten pages at eight widths in both themes. Native confirmation branches, assistive-technology coverage and cross-browser checks still need further verification; this is not a claim of exhaustive accessibility certification.
+
+## Schema changes
+
+The backend container runs `alembic upgrade head` before starting the API. Add a new migration for future schema changes rather than editing an already applied migration. Backup format versioning is independent of database migration versioning.
+
+## Scope
+
+This application is designed for one person on one local computer. Cloud sync, bank integration, authentication, multiple users, CSV/Excel export and advanced forecasting are outside the current scope.

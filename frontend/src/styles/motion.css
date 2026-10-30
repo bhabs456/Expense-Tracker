@@ -1,0 +1,131 @@
+/* Short, finite entrances. Persistent layout controls use Tailwind transitions. */
+@keyframes page-arrive {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes card-arrive {
+  from {
+    opacity: 0;
+    transform: translateY(15px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes soft-reveal {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@keyframes dialog-arrive {
+  from {
+    opacity: 0;
+    transform: translateY(24px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes toast-arrive {
+  from {
+    opacity: 0;
+    translate: 0 -12px;
+  }
+  to {
+    opacity: 1;
+    translate: 0 0;
+  }
+}
+.page-header {
+  animation: page-arrive 360ms cubic-bezier(0.2, 0.8, 0.2, 1) backwards;
+}
+.stats > .stat {
+  animation: card-arrive 420ms cubic-bezier(0.2, 0.8, 0.2, 1) backwards;
+}
+.stats > .stat:nth-child(2) {
+  animation-delay: 45ms;
+}
+.stats > .stat:nth-child(3) {
+  animation-delay: 90ms;
+}
+.stats > .stat:nth-child(4) {
+  animation-delay: 135ms;
+}
+.panel {
+  animation: soft-reveal 320ms ease-out backwards;
+}
+.dashboard-grid > .panel:nth-child(2),
+.subscription-grid > .panel:nth-child(2) {
+  animation-delay: 70ms;
+}
+.batch-row {
+  animation: page-arrive 260ms ease-out backwards;
+}
+.modal-backdrop {
+  animation: soft-reveal 180ms ease-out;
+}
+.modal {
+  animation: dialog-arrive 280ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.toast {
+  animation: toast-arrive 240ms ease-out;
+}
+.nav-label {
+  display: block;
+  max-width: 150px;
+  opacity: 1;
+  white-space: nowrap;
+}
+.collapsed .nav-label {
+  max-width: 0;
+  opacity: 0;
+  transform: translateX(-7px);
+  overflow: hidden;
+}
+.collapsed .sidebar nav a {
+  gap: 0;
+}
+body {
+  transition:
+    background-color 240ms ease,
+    color 180ms ease;
+}
+@media (hover: hover) {
+  .sidebar nav a:hover {
+    transform: translateX(3px);
+  }
+  .sidebar nav a:active {
+    transform: translateX(1px);
+  }
+}
+@media (max-width: 760px) {
+  .sidebar nav a .nav-glyph {
+    display: grid;
+  }
+  .sidebar nav a .nav-label {
+    display: none;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+    transition: none !important;
+  }
+  .sidebar nav a:hover,
+  .sidebar nav a:active {
+    transform: none;
+  }
+}
