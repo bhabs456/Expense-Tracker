@@ -85,6 +85,7 @@ def monthly(db, m, rows=None):
         "spending": spent,
         "remaining": budget - spent,
         "savings": budget - spent,
+        "savings_available_on": shift(m).isoformat(),
         "stipend_pending": not bool(s),
         "usage_percent": spent / budget * 100
         if budget
@@ -122,25 +123,29 @@ def ledger(db):
 def savings_summary(db, today):
     rows = expense_rows(db)
     history = [monthly(db, m, rows) for m in months(START, month(today))]
-    adjustments = sum(
-        (
-            t.amount if t.type == "credit" else -t.amount
-            for t in db.scalars(
-                select(SavingsTransaction).where(SavingsTransaction.date <= today)
-            )
-        ),
-        ZERO,
+    transactions = list(
+        db.scalars(select(SavingsTransaction).where(SavingsTransaction.date <= today))
     )
+    credits = sum((t.amount for t in transactions if t.type == "credit"), ZERO)
+    debits = sum((t.amount for t in transactions if t.type == "debit"), ZERO)
+    monthly_total = sum((r["savings"] for r in history), ZERO)
+    current = monthly(db, max(today, START), rows)
+    # Savings goals are guidance, never a second deduction or transfer.
+    # Only completed months enter the available balance; derive them once from source records.
     return {
-        "accumulated": sum((r["savings"] for r in history), ZERO) + adjustments,
-        "projected": monthly(db, today, rows)["savings"] if today >= START else ZERO,
+        "accumulated": monthly_total + credits - debits,
+        "projected": current["savings"] if today >= START else ZERO,
+        "completed_month_savings": monthly_total,
+        "ledger_credits": credits,
+        "ledger_debits": debits,
+        "current_month": current,
         "history": history,
     }
 
 
 def renewal_dates(sub, through):
-    """Fixed 30-day calendar-date intervals, anchored to the tracking date."""
-    due = sub.start_date + timedelta(days=30)
+    """Fixed 30-day intervals beginning on the explicitly scheduled first charge."""
+    due = sub.first_billing_date or sub.start_date + timedelta(days=30)
     while due <= through:
         if due >= START:
             yield due
@@ -158,7 +163,8 @@ def process_subscriptions(db, today):
         }
         # Preserve previously processed history when moving from calendar-month billing.
         # Never fill a new 30-day occurrence into an already processed historical period.
-        processed_through = max(existing, default=sub.start_date)
+        first_due = sub.first_billing_date or sub.start_date + timedelta(days=30)
+        processed_through = max(existing, default=first_due - timedelta(days=1))
         for d in renewal_dates(sub, today):
             if d in existing or d <= processed_through:
                 continue
@@ -190,6 +196,7 @@ def process_subscriptions(db, today):
 def next_charge(sub, today):
     if sub.status != "active":
         return None
-    elapsed = (today - sub.start_date).days
-    interval = max(1, elapsed // 30 + 1)
-    return sub.start_date + timedelta(days=30 * interval)
+    first_due = sub.first_billing_date or sub.start_date + timedelta(days=30)
+    if today < first_due:
+        return first_due
+    return first_due + timedelta(days=30 * ((today - first_due).days // 30 + 1))

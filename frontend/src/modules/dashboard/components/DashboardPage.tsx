@@ -15,8 +15,10 @@ import { CategoryChart } from "@/components/shared/Charts";
 import { ExpenseRecords } from "@/modules/expenses";
 import { useResource } from "@/hooks/useResource";
 import { defaultMonth, money } from "@/utils/format";
+import { useWorkspace } from "@/components/layouts/WorkspaceProvider";
 import { dashboardService } from "../services/dashboardService";
 export function DashboardPage() {
+  const { catalog } = useWorkspace();
   const [month, setMonth] = useState(defaultMonth);
   const {
     data: d,
@@ -60,7 +62,7 @@ export function DashboardPage() {
               title="Remaining budget"
               value={d.remaining}
               accent
-              hint="Budget less regular net spending"
+              hint="Regular spending only · savings is separate"
             />
             <StatCard
               title="Today’s spending"
@@ -95,9 +97,15 @@ export function DashboardPage() {
               >
                 {money(d.accumulated_savings)}
               </strong>
-              <small>Completed months + savings credits − debits</small>
+              <small>
+                Completed months + savings credits − savings purchases
+              </small>
               <div className="goal">
-                <span>Selected month’s projected savings</span>
+                <span>
+                  {month < (catalog?.today || "").slice(0, 7)
+                    ? "Selected month’s completed savings"
+                    : "Selected month’s projected savings"}
+                </span>
                 <b>{money(d.remaining)}</b>
               </div>
               <ProgressBar
@@ -107,6 +115,10 @@ export function DashboardPage() {
                   100
                 }
               />
+              <small>
+                Goals are targets, not deductions. The full leftover joins
+                savings after month-end, counted once.
+              </small>
               <div className="goals">
                 <span>
                   Minimum <b>{money(d.minimum_goal)}</b>

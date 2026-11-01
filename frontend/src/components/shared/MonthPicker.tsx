@@ -4,9 +4,11 @@ import { useWorkspace } from "@/components/layouts/WorkspaceProvider";
 export function MonthPicker({
   value,
   onChange,
+  allowFuture = false,
 }: {
   value: string;
   onChange: (v: string) => void;
+  allowFuture?: boolean;
 }) {
   const { catalog } = useWorkspace();
   return (
@@ -16,9 +18,11 @@ export function MonthPicker({
       required
       min="2026-11"
       max={
-        (catalog?.today || "2026-11").slice(0, 7) < "2026-11"
-          ? "2026-11"
-          : catalog?.today.slice(0, 7)
+        allowFuture
+          ? undefined
+          : (catalog?.today || "2026-11").slice(0, 7) < "2026-11"
+            ? "2026-11"
+            : catalog?.today.slice(0, 7)
       }
       value={value}
       onValueChange={(nextValue) => {

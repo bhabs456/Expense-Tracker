@@ -641,3 +641,26 @@ textarea:focus {
 .topbar .topbar-actions {
   flex-shrink: 0;
 }
+
+.savings-breakdown {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 180px), 1fr));
+  gap: 18px;
+  margin: 22px 0;
+}
+.savings-breakdown > div {
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--soft);
+  min-width: 0;
+}
+.savings-breakdown dt {
+  color: var(--muted);
+  font-size: 12px;
+}
+.savings-breakdown dd {
+  margin: 8px 0 0;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}

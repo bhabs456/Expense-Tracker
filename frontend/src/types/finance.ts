@@ -78,6 +78,7 @@ export interface MonthlySummary {
   spending: Money;
   remaining: Money;
   savings: Money;
+  savings_available_on: string;
   stipend_pending: boolean;
   usage_percent: Money;
   categories: CategoryTotal[];
@@ -93,6 +94,10 @@ export interface DashboardSummary extends MonthlySummary {
 export interface SavingsSummary {
   accumulated: Money;
   projected: Money;
+  completed_month_savings: Money;
+  ledger_credits: Money;
+  ledger_debits: Money;
+  current_month: MonthlySummary;
   history: MonthlySummary[];
   settings: Preferences;
 }
@@ -121,6 +126,7 @@ export interface SubscriptionInput {
   category: string;
   payment_method: string;
   first_payment_made: boolean;
+  first_billing_date: string;
   existing_expense_id: number | null;
 }
 export type SubscriptionEdit = Pick<
@@ -132,7 +138,9 @@ export interface Subscription extends SubscriptionEdit {
   start_date: string;
   billing_day: number;
   billing_interval_days: number;
-  first_payment_status: "paid" | "not_recorded" | "deleted";
+  first_billing_date: string;
+  first_payment_date: string;
+  first_payment_status: "paid" | "not_recorded" | "deleted" | "scheduled";
   status: "active" | "paused" | "canceled";
   next_charge: string | null;
 }

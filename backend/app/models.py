@@ -76,6 +76,7 @@ class Subscription(Base):
     amount: Mapped[Decimal] = mapped_column(Numeric(14, 2))
     start_date: Mapped[date] = mapped_column(Date)
     billing_day: Mapped[int] = mapped_column(Integer)
+    first_billing_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     category: Mapped[str] = mapped_column(String(100), default="Subscriptions")
     payment_method: Mapped[str] = mapped_column(String(100))
     status: Mapped[str] = mapped_column(String(20), default="active")

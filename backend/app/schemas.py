@@ -80,6 +80,7 @@ class SubscriptionIn(Strict):
     payment_method: str = Field(min_length=1, max_length=100)
     category: str = Field(default="Subscriptions", min_length=1, max_length=100)
     first_payment_made: bool = False
+    first_billing_date: date | None = None
     existing_expense_id: int | None = None
 
 

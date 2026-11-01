@@ -50,10 +50,14 @@ export function Dialog({
       if (!nodes?.length) return;
       const first = nodes[0],
         last = nodes[nodes.length - 1];
-      if (e.shiftKey && document.activeElement === first) {
+      const active = document.activeElement;
+      const inside = [el, ...portalRoots].some((root) =>
+        root?.contains(active),
+      );
+      if (e.shiftKey && (active === first || active === el || !inside)) {
         last.focus();
         e.preventDefault();
-      } else if (!e.shiftKey && document.activeElement === last) {
+      } else if (!e.shiftKey && (active === last || !inside)) {
         first.focus();
         e.preventDefault();
       }

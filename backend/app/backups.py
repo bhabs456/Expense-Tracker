@@ -4,7 +4,7 @@ import json
 import os
 import re
 from pathlib import Path
-from datetime import datetime, date, timezone
+from datetime import datetime, date, timezone, timedelta
 from decimal import Decimal
 from typing import Literal
 from uuid import uuid4
@@ -23,7 +23,7 @@ from .schemas import (
     SubscriptionEdit,
 )
 from .finance import START, shift, record
-from .catalog import CATEGORIES, PAYMENTS, SOURCES
+from .catalog import CATEGORIES, PAYMENTS, SOURCES, canonical_subcategory
 
 DIRECTORY = Path(os.getenv("BACKUP_DIR", "./backups"))
 MAX_BYTES = 20 * 1024 * 1024
@@ -40,7 +40,7 @@ def encode(v):
 def snapshot(db):
     return {
         "format": "personal-expense-tracker",
-        "version": 1,
+        "version": 2,
         "created_at": datetime.now(timezone.utc).isoformat(),
         "tables": {
             m.__tablename__: [record(r) for r in db.scalars(select(m).order_by(m.id))]
@@ -73,7 +73,7 @@ def save(db, prefix):
 class Envelope(BaseModel):
     model_config = ConfigDict(extra="forbid")
     format: Literal["personal-expense-tracker"]
-    version: Literal[1]
+    version: Literal[1, 2]
     created_at: datetime
     tables: dict[str, list[dict]]
 
@@ -98,6 +98,10 @@ def validated(data):
         seen = set()
         fields = {c.name for c in m.__table__.columns}
         for raw in env.tables[m.__tablename__]:
+            if m == Subscription and env.version == 1 and "first_billing_date" not in raw:
+                raw = {**raw, "first_billing_date": (
+                    date.fromisoformat(raw["start_date"]) + timedelta(days=30)
+                ).isoformat()}
             if set(raw) != fields:
                 raise ValueError(f"Invalid fields in {m.__tablename__}")
             if type(raw["id"]) is not int or raw["id"] < 1 or raw["id"] in seen:
@@ -115,6 +119,7 @@ def validated(data):
                     {k: v for k, v in row.items() if k in schema.model_fields}
                 )
             if m in (Expense, SavingsTransaction):
+                row["subcategory"] = canonical_subcategory(row["category"], row["subcategory"])
                 if row["date"] < START:
                     raise ValueError("Transaction before tracking start")
                 cats = (
@@ -134,6 +139,8 @@ def validated(data):
                 raise ValueError("Invalid stipend month")
             if m == Subscription and (
                 row["start_date"] < START
+                or row["first_billing_date"] is None
+                or row["first_billing_date"] < row["start_date"]
                 or row["status"] not in ("active", "paused", "canceled")
                 or not 1 <= row["billing_day"] <= 31
                 or row["category"] not in CATEGORIES

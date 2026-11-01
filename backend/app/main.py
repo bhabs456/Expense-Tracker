@@ -2,7 +2,7 @@ import threading
 import asyncio
 import os
 import logging
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal
 from contextlib import asynccontextmanager
 from typing import Annotated
@@ -18,7 +18,7 @@ from .db import get_db, SessionLocal
 from .models import *
 from .schemas import *
 from .finance import *
-from .catalog import CATEGORIES, PAYMENTS, SOURCES
+from .catalog import CATEGORIES, PAYMENTS, SOURCES, canonical_subcategory
 
 # Serialize financial operations within a process; PostgreSQL lock coordinates workers.
 mutex = threading.Lock()
@@ -125,6 +125,7 @@ def get(db, cls, id):
 
 
 def valid_expense(p, savings=False):
+    p.subcategory = canonical_subcategory(p.category, p.subcategory)
     if p.date < START:
         fail("Tracking begins November 1, 2026")
     allowed = (
@@ -513,16 +514,19 @@ def process(db: DB):
     return {"generated": process_subscriptions(db, today())}
 
 
-def initial_payment_status(db, sub):
-    occurrence = db.scalar(
-        select(Occurrence).where(
-            Occurrence.subscription_id == sub.id,
-            Occurrence.billing_date == sub.start_date,
-        )
-    )
-    return {"generated": "paid", "deleted": "deleted", "skipped": "not_recorded"}.get(
-        occurrence.state if occurrence else "skipped", "not_recorded"
-    )
+def initial_payment_details(db, sub):
+    occurrence = db.scalar(select(Occurrence).where(
+        Occurrence.subscription_id == sub.id, Occurrence.billing_date == sub.start_date))
+    payment_date = sub.start_date
+    if occurrence is None:
+        payment_date = sub.first_billing_date or sub.start_date + timedelta(days=30)
+        occurrence = db.scalar(select(Occurrence).where(
+            Occurrence.subscription_id == sub.id, Occurrence.billing_date == payment_date))
+    return {
+        "first_payment_date": payment_date,
+        "first_payment_status": {"generated": "paid", "deleted": "deleted", "skipped": "not_recorded"}.get(
+            occurrence.state if occurrence else "", "scheduled"),
+    }
 
 
 @app.get("/api/v1/subscriptions")
@@ -533,7 +537,8 @@ def subscriptions(db: DB):
             **record(s),
             "next_charge": next_charge(s, today()),
             "billing_interval_days": 30,
-            "first_payment_status": initial_payment_status(db, s),
+            "first_billing_date": s.first_billing_date or s.start_date + timedelta(days=30),
+            **initial_payment_details(db, s),
         }
         for s in db.scalars(select(Subscription).order_by(Subscription.id.desc()))
     ]
@@ -547,8 +552,16 @@ def add_subscription(p: SubscriptionIn, db: DB):
         fail("Invalid category or payment method")
     if p.first_payment_made and p.start_date > today():
         fail("An already paid charge cannot have a future date")
+    first_due = p.first_billing_date or p.start_date + timedelta(days=30)
+    if first_due < START or first_due < p.start_date:
+        fail("The next payment cannot be before the subscription start date")
+    if p.first_payment_made and first_due <= p.start_date:
+        fail("The next payment must be after the already paid payment date")
+    if p.first_billing_date and not p.first_payment_made and first_due < today():
+        fail("Choose today or a future date for the upcoming payment")
     s = Subscription(
-        **p.model_dump(exclude={"first_payment_made", "existing_expense_id"}),
+        **p.model_dump(exclude={"first_payment_made", "existing_expense_id", "first_billing_date"}),
+        first_billing_date=first_due,
         billing_day=p.start_date.day,
     )
     # billing_day is retained only for version-1 backup compatibility; renewals use 30-day intervals.
@@ -595,8 +608,8 @@ def add_subscription(p: SubscriptionIn, db: DB):
                 expense_id=e.id,
             )
         )
-    else:
-        # Initial payment is excluded; automatic renewals start after tracking start.
+    elif p.first_billing_date is None:
+        # Old clients retain their previous skipped-initial-payment semantics.
         db.add(
             Occurrence(subscription_id=s.id, billing_date=s.start_date, state="skipped")
         )

@@ -1,3 +1,14 @@
+/* Keep native scrolling available without visible scrollbar tracks. */
+* {
+  scrollbar-width: none;
+  scroll-behavior: smooth;
+}
+*::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
 /* Short, finite entrances. Persistent layout controls use Tailwind transitions. */
 @keyframes page-arrive {
   from {
@@ -123,6 +134,7 @@ body {
   *::after {
     animation: none !important;
     transition: none !important;
+    scroll-behavior: auto !important;
   }
   .sidebar nav a:hover,
   .sidebar nav a:active {

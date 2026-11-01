@@ -536,3 +536,227 @@ def test_fixed_interval_preserves_legacy_processed_history(client, clock):
     ok(client.post(P + "/subscriptions/process"))
     assert ok(client.get(P + "/expenses"))["total"] == 3
     assert ok(client.get(P + "/subscriptions"))[0]["next_charge"] == "2027-03-15"
+
+
+def test_updated_subcategories_and_legacy_food_input(client):
+    catalog = ok(client.get(P + "/catalog"))
+    assert catalog["categories"]["Food & Drinks"] == ["Groceries", "Food & Drinks"]
+    assert "Metro" in catalog["categories"]["Transport"]
+    metro = exp("45")
+    metro.update(category="Transport", subcategory="Metro")
+    food = exp("80")
+    food["subcategory"] = "Food & Drinks"
+    grocery = exp("250")
+    grocery["subcategory"] = "Groceries"
+    rows = ok(batch(client, metro, food, grocery), 201)["items"]
+    assert [r["subcategory"] for r in rows] == ["Metro", "Food & Drinks", "Groceries"]
+    legacy = ok(batch(client, exp("90")), 201)["items"][0]
+    assert legacy["subcategory"] == "Food & Drinks"
+
+
+def test_month_end_saves_entire_leftover_once_without_deducting_goal(client, clock):
+    clock[0] = date(2026, 11, 30)
+    ok(stipend(client, amount="20000"), 201)
+    ok(client.patch(P + "/settings", json={
+        "minimum_savings_percent": 50,
+        "stretch_savings_percent": 60,
+        "default_payment_method": "UPI",
+        "theme": "dark",
+    }))
+    ok(batch(client, exp("8000")), 201)
+    d = dash(client)
+    assert d["budget"] == 20000 and d["minimum_goal"] == 10000
+    assert d["spending"] == 8000 and d["remaining"] == 12000
+    summary = ok(client.get(P + "/savings/summary"))
+    assert summary["projected"] == 12000 and summary["accumulated"] == 0
+    assert summary["current_month"]["savings_available_on"] == "2026-12-01"
+    clock[0] = date(2026, 12, 1)
+    for _ in range(3):
+        summary = ok(client.get(P + "/savings/summary"))
+        assert summary["accumulated"] == summary["completed_month_savings"] == 12000
+    assert summary["history"][0]["savings"] == 12000
+    assert ok(client.get(P + "/savings/transactions"))["total"] == 0
+    assert dash(client, "2026-12")["budget"] == 0
+    ok(client.patch(P + "/settings", json={
+        "minimum_savings_percent": 10,
+        "stretch_savings_percent": 20,
+        "default_payment_method": "UPI",
+        "theme": "dark",
+    }))
+    assert ok(client.get(P + "/savings/summary"))["accumulated"] == 12000
+
+
+def test_savings_credits_purchases_and_refunds_stay_outside_monthly_budget(client, clock):
+    clock[0] = date(2026, 11, 30)
+    ok(stipend(client, amount="20000"), 201)
+    ok(stipend(client, month="2026-11-01", amount="40000"), 201)
+    expense = ok(batch(client, exp("8000")), 201)["items"][0]
+    ok(tx(client, "3000"), 201)
+    purchase = ok(tx(client, "1000", type="debit", day="2026-11-20"), 201)
+    rows = ok(client.get(P + "/savings/transactions"))["items"]
+    assert next(r for r in rows if r["id"] == purchase["id"])["running_balance"] == 2000
+    summary = ok(client.get(P + "/savings/summary"))
+    assert summary["accumulated"] == 2000 and summary["projected"] == 12000
+    assert dash(client)["spending"] == 8000 and dash(client)["budget"] == 20000
+    clock[0] = date(2026, 12, 1)
+    summary = ok(client.get(P + "/savings/summary"))
+    assert summary["completed_month_savings"] == 12000
+    assert summary["ledger_credits"] == 3000 and summary["ledger_debits"] == 1000
+    assert summary["accumulated"] == 14000
+    assert dash(client, "2026-12")["budget"] == 40000
+    purchase = ok(tx(client, "500", type="debit", day="2026-12-01"), 201)
+    rows = ok(client.get(P + "/savings/transactions"))["items"]
+    assert next(r for r in rows if r["id"] == purchase["id"])["running_balance"] == 13500
+    assert dash(client, "2026-12")["spending"] == 0
+    clock[0] = date(2026, 12, 2)
+    ok(client.post(f"{P}/expenses/{expense['id']}/refunds", json={
+        "amount": "2000", "date": "2026-12-02",
+    }), 201)
+    summary = ok(client.get(P + "/savings/summary"))
+    assert summary["completed_month_savings"] == 14000
+    assert summary["accumulated"] == 15500
+    assert dash(client, "2026-12")["budget"] == 40000
+    assert dash(client, "2026-12")["spending"] == 0
+
+
+def test_legacy_food_backup_can_still_be_restored(client):
+    ok(batch(client, exp()), 201)
+    backup = ok(client.post(P + "/backups"))
+    backup["tables"]["expenses"][0]["subcategory"] = "Meals"
+    ok(client.post(P + "/backups/restore", json={
+        "confirmation": "RESTORE", "backup": backup,
+    }))
+    restored = ok(client.get(P + "/expenses"))["items"][0]
+    assert restored["subcategory"] == "Food & Drinks"
+    assert restored["amount"] == 100
+
+
+def test_future_calendar_browsing_does_not_allow_future_expenses(client, clock):
+    clock[0] = date(2026, 11, 1)
+    calendar = ok(client.get(P + "/calendar", params={"month": "2026-12"}))
+    assert calendar == {"items": [], "days": []}
+    assert batch(client, exp(day="2026-12-01")).status_code == 422
+    assert client.get(P + "/calendar", params={"month": "2026-10"}).status_code == 422
+
+
+def test_explicit_upcoming_payment_uses_due_date_then_thirty_days(client, clock):
+    clock[0] = date(2026, 11, 1)
+    response = client.post(P + "/subscriptions", json={
+        "name": "YT Premium", "amount": "149", "start_date": "2026-11-01",
+        "first_billing_date": "2026-11-22", "payment_method": "UPI",
+        "first_payment_made": False,
+    })
+    ok(response, 201)
+    listed = ok(client.get(P + "/subscriptions"))[0]
+    assert listed["next_charge"] == listed["first_payment_date"] == "2026-11-22"
+    assert listed["first_payment_status"] == "scheduled"
+    assert ok(client.get(P + "/expenses"))["total"] == 0
+    for day, next_day, count in [
+        (date(2026, 11, 22), "2026-12-22", 1),
+        (date(2026, 12, 22), "2027-01-21", 2),
+        (date(2027, 1, 21), "2027-02-20", 3),
+    ]:
+        clock[0] = day
+        for _ in range(2):
+            ok(client.post(P + "/subscriptions/process"))
+        assert ok(client.get(P + "/expenses"))["total"] == count
+        assert ok(client.get(P + "/subscriptions"))[0]["next_charge"] == next_day
+    assert {r["date"] for r in ok(client.get(P + "/expenses"))["items"]} == {
+        "2026-11-22", "2026-12-22", "2027-01-21",
+    }
+
+
+def test_already_paid_uses_actual_payment_and_editable_next_date(client, clock):
+    clock[0] = date(2026, 11, 10)
+    ok(client.post(P + "/subscriptions", json={
+        "name": "Existing plan", "amount": "199", "start_date": "2026-11-05",
+        "first_billing_date": "2026-11-22", "payment_method": "UPI",
+        "first_payment_made": True,
+    }), 201)
+    rows = ok(client.get(P + "/expenses"))["items"]
+    assert len(rows) == 1 and rows[0]["date"] == "2026-11-05"
+    subscription = ok(client.get(P + "/subscriptions"))[0]
+    assert subscription["first_payment_status"] == "paid"
+    assert subscription["first_payment_date"] == "2026-11-05"
+    assert subscription["next_charge"] == "2026-11-22"
+    clock[0] = date(2026, 11, 22)
+    assert ok(client.get(P + "/subscriptions"))[0]["next_charge"] == "2026-12-22"
+    assert {e["date"] for e in ok(client.get(P + "/expenses"))["items"]} == {
+        "2026-11-05", "2026-11-22",
+    }
+
+
+def test_upcoming_payment_due_today_is_recorded_once(client, clock):
+    clock[0] = date(2026, 11, 1)
+    ok(client.post(P + "/subscriptions", json={
+        "name": "Due today", "amount": "49", "start_date": "2026-11-01",
+        "first_billing_date": "2026-11-01", "payment_method": "UPI",
+    }), 201)
+    for _ in range(2):
+        listed = ok(client.get(P + "/subscriptions"))[0]
+    assert listed["next_charge"] == "2026-12-01"
+    assert listed["first_payment_status"] == "paid"
+    assert ok(client.get(P + "/expenses"))["total"] == 1
+
+
+def test_explicit_payment_date_validation(client, clock):
+    clock[0] = date(2026, 11, 10)
+    base = dict(name="Plan", amount="100", start_date="2026-11-10",
+                first_billing_date="2026-11-22", payment_method="UPI")
+    for changes in [
+        {"first_billing_date": "2026-11-09"},
+        {"start_date": "2026-11-11", "first_payment_made": True},
+        {"first_billing_date": "2026-11-10", "first_payment_made": True},
+        {"first_billing_date": "2026-10-31"},
+    ]:
+        assert client.post(P + "/subscriptions", json={**base, **changes}).status_code == 422
+    assert ok(client.get(P + "/subscriptions")) == []
+    assert ok(client.get(P + "/expenses"))["total"] == 0
+
+
+def test_first_upcoming_payment_tombstone_is_preserved(client, clock):
+    clock[0] = date(2026, 11, 1)
+    ok(client.post(P + "/subscriptions", json={
+        "name": "Upcoming", "amount": "99", "start_date": "2026-11-01",
+        "first_billing_date": "2026-11-22", "payment_method": "UPI",
+    }), 201)
+    clock[0] = date(2026, 11, 22)
+    ok(client.post(P + "/subscriptions/process"))
+    expense = ok(client.get(P + "/expenses"))["items"][0]
+    ok(client.delete(f"{P}/expenses/{expense['id']}?confirm=true"))
+    assert ok(client.get(P + "/subscriptions"))[0]["first_payment_status"] == "deleted"
+    ok(client.post(P + "/subscriptions/process"))
+    assert ok(client.get(P + "/expenses"))["total"] == 0
+    clock[0] = date(2026, 12, 22)
+    ok(client.post(P + "/subscriptions/process"))
+    assert [e["date"] for e in ok(client.get(P + "/expenses"))["items"]] == ["2026-12-22"]
+
+
+def test_version_two_backup_retains_explicit_billing_schedule(client, clock):
+    clock[0] = date(2026, 11, 1)
+    ok(client.post(P + "/subscriptions", json={
+        "name": "YT", "amount": "149", "start_date": "2026-11-01",
+        "first_billing_date": "2026-11-22", "payment_method": "UPI",
+    }), 201)
+    backup = ok(client.post(P + "/backups"))
+    assert backup["version"] == 2
+    ok(client.post(P + "/backups/restore", json={"confirmation": "RESTORE", "backup": backup}))
+    assert ok(client.get(P + "/subscriptions"))[0]["next_charge"] == "2026-11-22"
+    assert ok(client.get(P + "/expenses"))["total"] == 0
+
+
+def test_version_one_backup_preserves_legacy_schedule(client, clock):
+    clock[0] = date(2026, 11, 1)
+    ok(client.post(P + "/subscriptions", json={
+        "name": "Legacy", "amount": "149", "start_date": "2026-11-01",
+        "payment_method": "UPI", "first_payment_made": False,
+    }), 201)
+    backup = ok(client.post(P + "/backups"))
+    backup["version"] = 1
+    for subscription in backup["tables"]["subscriptions"]:
+        subscription.pop("first_billing_date")
+    ok(client.post(P + "/backups/restore", json={"confirmation": "RESTORE", "backup": backup}))
+    listed = ok(client.get(P + "/subscriptions"))[0]
+    assert listed["next_charge"] == "2026-12-01"
+    assert listed["first_payment_status"] == "not_recorded"
+    assert ok(client.get(P + "/expenses"))["total"] == 0

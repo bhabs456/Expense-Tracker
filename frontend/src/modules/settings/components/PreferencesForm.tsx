@@ -24,7 +24,8 @@ export function PreferencesForm() {
     <section className="panel">
       <h2>Preferences</h2>
       <p className="muted">
-        Goals guide your spending; they never restrict it.
+        Goals are targets only. The full budget left after regular spending
+        becomes savings after month-end; nothing is deducted upfront.
       </p>
       <form
         onSubmit={(e) => {

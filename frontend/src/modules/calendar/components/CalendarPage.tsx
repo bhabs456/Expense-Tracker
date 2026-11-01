@@ -23,6 +23,7 @@ export function CalendarPage() {
         description="Your spending, one day at a time."
       >
         <MonthPicker
+          allowFuture
           value={month}
           onChange={(v) => {
             setMonth(v);
@@ -37,6 +38,10 @@ export function CalendarPage() {
       ) : (
         <>
           <section className="panel">
+            <p className="muted">
+              Browse months from November 2026 onward. Future dates can be
+              viewed; expenses can only be recorded up to today.
+            </p>
             <div className="panel-heading">
               <h2>
                 {new Date(y, m - 1, 1).toLocaleDateString("en-IN", {

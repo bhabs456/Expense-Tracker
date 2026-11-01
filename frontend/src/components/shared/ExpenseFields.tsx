@@ -97,7 +97,11 @@ export function expenseInput(value: ExpenseInput): ExpenseInput {
     amount: value.amount,
     date: value.date,
     category: value.category,
-    subcategory: value.subcategory,
+    subcategory:
+      value.category === "Food & Drinks" &&
+      ["Meals", "Snacks", "Drinks"].includes(value.subcategory)
+        ? "Food & Drinks"
+        : value.subcategory,
     payment_method: value.payment_method,
     notes: value.notes,
   };

@@ -1260,7 +1260,6 @@ button:not(:disabled):active,
 .sidebar nav {
   min-height: 0;
   overflow-y: auto;
-  scrollbar-width: thin;
 }
 .shell > main {
   min-width: 0;

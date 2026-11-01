@@ -8,7 +8,7 @@ A local-first personal expense tracker with a Next.js frontend, FastAPI backend,
 - Stipend-funded monthly budgets: a confirmed receipt funds the month after its earning month using the actual amount received.
 - Atomic expense batches, duplicate warnings, edits, linked refunds, and confirmation before deleting expenses and refunds.
 - A separate savings ledger with credits, debits, historical balances, and recalculation after backdated changes.
-- Subscription renewals every 30 days from the tracking date, explicit initial-payment choice, catch-up processing, pause/resume, and occurrence tombstones preventing deleted charges from reappearing.
+- Subscription renewals every 30 days from an explicit next payment date, selectable actual paid date, catch-up processing, pause/resume, and occurrence tombstones preventing deleted charges from reappearing.
 - Search, combined filters and pagination; Indian rupee formatting; interactive Recharts analytics.
 - Complete JSON backup/restore with a safety backup before replacement.
 - Light/dark themes, responsive floating navigation, mobile drawer, keyboard-accessible date picker, and reduced-motion support.
@@ -63,13 +63,17 @@ Tracking starts on **1 November 2026**, with zero opening savings. Transactions 
 
 1. Add a stipend with its earning month, expected amount and actual receipt details. Confirm only when received. An October 2026 earning month funds November 2026, even when received late; pending receipts contribute nothing.
 2. Add regular expenses in a batch. Select savings funding for savings-funded purchases, or create a debit in Savings Transactions. Add bonuses/gifts as credits in that ledger.
-3. Set up subscriptions. The tracking date anchors renewals at +30, +60, +90 days, independent of month-end. Choose Already paid to record/link an initial payment; choose Not paid / not recorded to omit it.
+3. Set up subscriptions with the next payment date. Choose Not paid yet to begin charging on that date, then every 30 days. Choose Already paid to select the actual paid date and record/link that payment; its next date defaults to payment date + 30 days and can be adjusted.
 4. Adjust savings goals, default payment method and theme in Settings.
 5. Download backups regularly and keep them somewhere safe on your device.
 
 Completed-month savings become available on the first day of the next month. Current-month projected savings are shown separately. Later refunds recalculate the original expense month. Backdated changes recalculate balances from source records. Negative historical savings balances require explicit confirmation.
 
 The subscription processor catches up at startup and every 60 seconds; the frontend also requests processing when opened. Paused periods stay skipped, and deleting a generated expense retains an occurrence tombstone. Deleting a subscription preserves historical expenses.
+
+Adding a subscription does not itself create an expense. Example: add an unpaid YouTube Premium subscription on 1 November with the next payment due on 22 November. Expenses are recorded on 22 November, 22 December and 21 January, every 30 days. Already paid records the initial expense on your selected actual payment date, defaulting to today. Due charges catch up when the app runs; this only tracks expenses and does not pay providers.
+
+Migration `0002` adds `first_billing_date` while retaining existing subscriptions' previous start-date + 30-day schedules. New JSON backups use format version 2; version-1 backups remain restorable with their original schedules.
 
 ## Backup and restore
 
@@ -149,7 +153,7 @@ npm run format:check
 npm run build
 ```
 
-Latest local checks: 33 backend tests and four frontend tests passed, along with type checking, formatting and production build. Browser checks covered all ten pages at eight widths in both themes. Native confirmation branches, assistive-technology coverage and cross-browser checks still need further verification; this is not a claim of exhaustive accessibility certification.
+Latest local checks: 45 backend tests and four frontend tests passed, along with type checking, formatting and production build. Browser checks covered all ten pages at eight widths in both themes. Native confirmation branches, assistive-technology coverage and cross-browser checks still need further verification; this is not a claim of exhaustive accessibility certification.
 
 ## Schema changes
 
@@ -158,3 +162,12 @@ The backend container runs `alembic upgrade head` before starting the API. Add a
 ## Scope
 
 This application is designed for one person on one local computer. Cloud sync, bank integration, authentication, multiple users, CSV/Excel export and advanced forecasting are outside the current scope.
+
+## Latest UI and savings behavior
+
+- Transport includes Metro. Food & Drinks has Groceries and Food & Drinks subcategories. Legacy Meals/Snacks/Drinks values remain compatible when editing or restoring records.
+- Savings goals are targets, not upfront deductions. The entire monthly budget left after regular spending becomes available savings after month-end, counted once. It does not increase the next month's spending budget. The Savings page shows completed monthly savings, direct credits and savings-funded purchases separately.
+- Calendar supports browsing future months from the tracking start; future-dated expense entry stays blocked. Dashboard/Analytics reporting selectors remain bounded to the current month.
+- Dropdown arrows and collapsed navigation controls have consistent spacing. Visible scrollbars are hidden while page, table and dialog scrolling remain available. Native smooth scrolling respects reduced-motion preferences.
+- Shared editor keyboard focus stays inside the modal, including when initially pressing Shift+Tab.
+- Side-income allocation into the regular spending budget is not yet implemented; direct savings ledger credits are unchanged.

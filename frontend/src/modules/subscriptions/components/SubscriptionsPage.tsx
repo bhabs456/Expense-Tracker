@@ -31,8 +31,9 @@ export function SubscriptionsPage() {
         </button>
       </PageHeader>
       <Alert variant="info">
-        Renewals run every 30 days from the tracking date. Missed charges catch
-        up automatically; paused periods stay skipped.
+        Choose the next payment date. Charges repeat every 30 days from that
+        date. Missed charges catch up automatically; paused periods stay
+        skipped.
       </Alert>
       {error ? (
         <ErrorState message={error} retry={reload} />
@@ -71,12 +72,16 @@ export function SubscriptionsPage() {
                     ? "Recorded as paid"
                     : r.first_payment_status === "deleted"
                       ? "Payment record deleted"
-                      : "Not recorded"}
+                      : r.first_payment_status === "scheduled"
+                        ? "Scheduled · not paid yet"
+                        : "Not recorded"}
                 </dd>
                 <dt>Next charge</dt>
                 <dd>{r.next_charge || "—"}</dd>
-                <dt>Tracking from</dt>
-                <dd>{r.start_date}</dd>
+                <dt>First payment date</dt>
+                <dd>{r.first_payment_date}</dd>
+                <dt>First scheduled charge</dt>
+                <dd>{r.first_billing_date}</dd>
               </dl>
               <div className="subscription-actions">
                 <button onClick={() => setEditor(r)}>Edit</button>
