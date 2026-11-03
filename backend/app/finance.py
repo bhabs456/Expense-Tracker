@@ -174,6 +174,7 @@ def process_subscriptions(db, today):
                     amount=sub.amount,
                     date=d,
                     category=sub.category,
+                    subcategory=sub.subcategory,
                     payment_method=sub.payment_method,
                     notes=sub.name,
                     subscription_id=sub.id,

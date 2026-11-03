@@ -20,7 +20,7 @@ services:
       DATABASE_URL: postgresql+psycopg://tracker:tracker@db:5432/tracker
       BACKUP_DIR: /backups
     ports:
-      - "127.0.0.1:8000:8000"
+      - "127.0.0.1:${BACKEND_PORT:-8080}:8000"
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/v1/health')"]
       interval: 5s
@@ -37,7 +37,7 @@ services:
       API_URL: http://backend:8000
       NEXT_TELEMETRY_DISABLED: "1"
     ports:
-      - "127.0.0.1:3000:3000"
+      - "127.0.0.1:${FRONTEND_PORT:-3030}:3000"
     depends_on:
       backend:
         condition: service_healthy

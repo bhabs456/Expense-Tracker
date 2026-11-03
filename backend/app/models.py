@@ -78,6 +78,7 @@ class Subscription(Base):
     billing_day: Mapped[int] = mapped_column(Integer)
     first_billing_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     category: Mapped[str] = mapped_column(String(100), default="Subscriptions")
+    subcategory: Mapped[str] = mapped_column(String(100), default="")
     payment_method: Mapped[str] = mapped_column(String(100))
     status: Mapped[str] = mapped_column(String(20), default="active")
     __table_args__ = (

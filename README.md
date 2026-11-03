@@ -32,9 +32,9 @@ Open:
 
 | Service | Local address |
 | --- | --- |
-| Application | http://localhost:3000 |
-| API documentation | http://localhost:8000/docs |
-| API health | http://localhost:8000/api/v1/health |
+| Application | http://localhost:3030 |
+| API documentation | http://localhost:8080/docs |
+| API health | http://localhost:8080/api/v1/health |
 | PostgreSQL host port | localhost:55432 |
 
 All published ports bind to loopback. The frontend proxies `/api/v1/*` requests to FastAPI through Docker's private network. The Compose database username/password are local development defaults, not financial credentials. Keep this deployment on your own computer; multi-user authentication and public hosting are outside its scope.
@@ -73,7 +73,7 @@ The subscription processor catches up at startup and every 60 seconds; the front
 
 Adding a subscription does not itself create an expense. Example: add an unpaid YouTube Premium subscription on 1 November with the next payment due on 22 November. Expenses are recorded on 22 November, 22 December and 21 January, every 30 days. Already paid records the initial expense on your selected actual payment date, defaulting to today. Due charges catch up when the app runs; this only tracks expenses and does not pay providers.
 
-Migration `0002` adds `first_billing_date` while retaining existing subscriptions' previous start-date + 30-day schedules. New JSON backups use format version 2; version-1 backups remain restorable with their original schedules.
+Migration `0002` adds `first_billing_date` while retaining existing subscriptions' previous start-date + 30-day schedules. JSON backup versions 1–3 remain restorable. New backups use version 3 to include subscription subcategories.
 
 ## Backup and restore
 
@@ -153,7 +153,7 @@ npm run format:check
 npm run build
 ```
 
-Latest local checks: 45 backend tests and four frontend tests passed, along with type checking, formatting and production build. Browser checks covered all ten pages at eight widths in both themes. Native confirmation branches, assistive-technology coverage and cross-browser checks still need further verification; this is not a claim of exhaustive accessibility certification.
+Latest local checks: 47 backend tests and four frontend tests passed, along with type checking, formatting and production build. Browser checks covered all ten pages at eight widths in both themes. Native confirmation branches, assistive-technology coverage and cross-browser checks still need further verification; this is not a claim of exhaustive accessibility certification.
 
 ## Schema changes
 
@@ -165,9 +165,11 @@ This application is designed for one person on one local computer. Cloud sync, b
 
 ## Latest UI and savings behavior
 
-- Transport includes Metro. Food & Drinks has Groceries and Food & Drinks subcategories. Legacy Meals/Snacks/Drinks values remain compatible when editing or restoring records.
+- V1.1 defines 11 fixed categories and 42 subcategories. New expense and subscription entries require an approved pair.
 - Savings goals are targets, not upfront deductions. The entire monthly budget left after regular spending becomes available savings after month-end, counted once. It does not increase the next month's spending budget. The Savings page shows completed monthly savings, direct credits and savings-funded purchases separately.
 - Calendar supports browsing future months from the tracking start; future-dated expense entry stays blocked. Dashboard/Analytics reporting selectors remain bounded to the current month.
 - Dropdown arrows and collapsed navigation controls have consistent spacing. Visible scrollbars are hidden while page, table and dialog scrolling remain available. Native smooth scrolling respects reduced-motion preferences.
 - Shared editor keyboard focus stays inside the modal, including when initially pressing Shift+Tab.
 - Side-income allocation into the regular spending budget is not yet implemented; direct savings ledger credits are unchanged.
+
+Migration `0003` applies deterministic V1.1 mappings and writes the original and proposed classifications to `taxonomy_v11_audit`. Ambiguous legacy pairs stay available for manual review. Take a PostgreSQL backup before upgrading. Docker host ports default to 3030 for the app and 8080 for the API. Override them with `FRONTEND_PORT` and `BACKEND_PORT` in the project’s local `.env` file.

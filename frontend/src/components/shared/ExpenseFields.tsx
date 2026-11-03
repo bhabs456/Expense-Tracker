@@ -16,6 +16,10 @@ export function ExpenseFields<T extends ExpenseInput>({
   credit?: boolean;
 }) {
   const { catalog } = useWorkspace();
+  const categories = credit
+    ? catalog?.savings_sources || []
+    : Object.keys(catalog?.categories || {});
+  const subcategories = catalog?.categories[value.category] || [];
   const change = (key: keyof ExpenseInput, v: string) =>
     onChange({
       ...value,
@@ -51,26 +55,38 @@ export function ExpenseFields<T extends ExpenseInput>({
           value={value.category}
           onChange={(e) => change("category", e.target.value)}
         >
-          {(credit
-            ? catalog?.savings_sources
-            : Object.keys(catalog?.categories || {})
-          )?.map((c) => (
+          {!categories.includes(value.category) && (
+            <option value={value.category} disabled>
+              {value.category} (historical)
+            </option>
+          )}
+          {categories.map((c) => (
             <option key={c}>{c}</option>
           ))}
         </select>
       </Field>
-      <Field label="Subcategory">
-        <select
-          value={value.subcategory}
-          onChange={(e) => change("subcategory", e.target.value)}
-        >
-          <option value="">None</option>
-          {!credit &&
-            catalog?.categories[value.category]?.map((c) => (
+      {!credit && (
+        <Field label="Subcategory">
+          <select
+            required
+            value={value.subcategory}
+            onChange={(e) => change("subcategory", e.target.value)}
+          >
+            <option value="" disabled>
+              Choose a subcategory
+            </option>
+            {value.subcategory &&
+              !subcategories.includes(value.subcategory) && (
+                <option value={value.subcategory} disabled>
+                  {value.subcategory} (review required)
+                </option>
+              )}
+            {subcategories.map((c) => (
               <option key={c}>{c}</option>
             ))}
-        </select>
-      </Field>
+          </select>
+        </Field>
+      )}
       <Field label="Payment method">
         <select
           value={value.payment_method}
@@ -97,11 +113,7 @@ export function expenseInput(value: ExpenseInput): ExpenseInput {
     amount: value.amount,
     date: value.date,
     category: value.category,
-    subcategory:
-      value.category === "Food & Drinks" &&
-      ["Meals", "Snacks", "Drinks"].includes(value.subcategory)
-        ? "Food & Drinks"
-        : value.subcategory,
+    subcategory: value.subcategory,
     payment_method: value.payment_method,
     notes: value.notes,
   };

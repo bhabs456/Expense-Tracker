@@ -61,7 +61,9 @@ export function SubscriptionsPage() {
                 <small> / 30 days</small>
               </strong>
               <p>
-                {r.category} · {r.payment_method}
+                {r.category}
+                {r.subcategory ? " → " + r.subcategory : ""} ·{" "}
+                {r.payment_method}
               </p>
               <dl>
                 <dt>Billing cycle</dt>

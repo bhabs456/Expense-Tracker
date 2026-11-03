@@ -65,6 +65,7 @@ export interface Filters {
   start: string;
   end: string;
   category: string;
+  subcategory: string;
   payment_method: string;
   type: string;
 }
@@ -124,6 +125,7 @@ export interface SubscriptionInput {
   amount: Money;
   start_date: string;
   category: string;
+  subcategory: string;
   payment_method: string;
   first_payment_made: boolean;
   first_billing_date: string;
@@ -131,7 +133,7 @@ export interface SubscriptionInput {
 }
 export type SubscriptionEdit = Pick<
   SubscriptionInput,
-  "name" | "amount" | "category" | "payment_method"
+  "name" | "amount" | "category" | "subcategory" | "payment_method"
 >;
 export interface Subscription extends SubscriptionEdit {
   id: number;

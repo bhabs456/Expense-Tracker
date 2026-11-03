@@ -23,7 +23,8 @@ from .schemas import (
     SubscriptionEdit,
 )
 from .finance import START, shift, record
-from .catalog import CATEGORIES, PAYMENTS, SOURCES, canonical_subcategory
+from .catalog import PAYMENTS, SOURCES
+from .taxonomy_v11 import historical_classification, known_historical_pair
 
 DIRECTORY = Path(os.getenv("BACKUP_DIR", "./backups"))
 MAX_BYTES = 20 * 1024 * 1024
@@ -40,7 +41,7 @@ def encode(v):
 def snapshot(db):
     return {
         "format": "personal-expense-tracker",
-        "version": 2,
+        "version": 3,
         "created_at": datetime.now(timezone.utc).isoformat(),
         "tables": {
             m.__tablename__: [record(r) for r in db.scalars(select(m).order_by(m.id))]
@@ -73,7 +74,7 @@ def save(db, prefix):
 class Envelope(BaseModel):
     model_config = ConfigDict(extra="forbid")
     format: Literal["personal-expense-tracker"]
-    version: Literal[1, 2]
+    version: Literal[1, 2, 3]
     created_at: datetime
     tables: dict[str, list[dict]]
 
@@ -86,6 +87,13 @@ SCHEMAS = {
     Subscription: SubscriptionEdit,
     Settings: SettingsIn,
 }
+
+
+def restore_classification(model, row):
+    if not known_historical_pair(row["category"], row["subcategory"]):
+        raise ValueError("Invalid historical classification")
+    if pair := historical_classification(model.__tablename__, row):
+        row["category"], row["subcategory"] = pair
 
 
 def validated(data):
@@ -102,6 +110,8 @@ def validated(data):
                 raw = {**raw, "first_billing_date": (
                     date.fromisoformat(raw["start_date"]) + timedelta(days=30)
                 ).isoformat()}
+            if m == Subscription and env.version < 3 and "subcategory" not in raw:
+                raw = {**raw, "subcategory": ""}
             if set(raw) != fields:
                 raise ValueError(f"Invalid fields in {m.__tablename__}")
             if type(raw["id"]) is not int or raw["id"] < 1 or raw["id"] in seen:
@@ -119,22 +129,17 @@ def validated(data):
                     {k: v for k, v in row.items() if k in schema.model_fields}
                 )
             if m in (Expense, SavingsTransaction):
-                row["subcategory"] = canonical_subcategory(row["category"], row["subcategory"])
                 if row["date"] < START:
                     raise ValueError("Transaction before tracking start")
-                cats = (
-                    SOURCES
-                    if m == SavingsTransaction and row["type"] == "credit"
-                    else CATEGORIES
-                )
-                if row["category"] not in cats or row["payment_method"] not in PAYMENTS:
-                    raise ValueError("Invalid category or payment method")
-                if (
-                    row["subcategory"]
-                    and row["category"] in CATEGORIES
-                    and row["subcategory"] not in CATEGORIES[row["category"]]
-                ):
-                    raise ValueError("Invalid subcategory")
+                if row["payment_method"] not in PAYMENTS:
+                    raise ValueError("Invalid payment method")
+                if m == SavingsTransaction and row["type"] == "credit":
+                    if row["category"] not in SOURCES:
+                        raise ValueError("Invalid savings source")
+                else:
+                    restore_classification(m, row)
+            if m == Subscription:
+                restore_classification(m, row)
             if m == Stipend and row["earning_month"] < shift(START, -1):
                 raise ValueError("Invalid stipend month")
             if m == Subscription and (
@@ -143,7 +148,6 @@ def validated(data):
                 or row["first_billing_date"] < row["start_date"]
                 or row["status"] not in ("active", "paused", "canceled")
                 or not 1 <= row["billing_day"] <= 31
-                or row["category"] not in CATEGORIES
                 or row["payment_method"] not in PAYMENTS
             ):
                 raise ValueError("Invalid subscription")

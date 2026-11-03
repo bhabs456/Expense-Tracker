@@ -5,6 +5,7 @@ export const EMPTY_FILTERS: Filters = {
   start: "",
   end: "",
   category: "",
+  subcategory: "",
   payment_method: "",
   type: "",
 };

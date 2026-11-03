@@ -82,6 +82,7 @@ class SubscriptionIn(Strict):
     first_payment_made: bool = False
     first_billing_date: date | None = None
     existing_expense_id: int | None = None
+    subcategory: str = Field(default="", max_length=100)
 
 
 class SubscriptionEdit(Strict):
@@ -89,6 +90,7 @@ class SubscriptionEdit(Strict):
     amount: Money = Field(gt=0, max_digits=14, decimal_places=2)
     category: str = Field(min_length=1, max_length=100)
     payment_method: str = Field(min_length=1, max_length=100)
+    subcategory: str = Field(default="", max_length=100)
 
 
 class SettingsIn(Strict):

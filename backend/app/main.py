@@ -18,7 +18,7 @@ from .db import get_db, SessionLocal
 from .models import *
 from .schemas import *
 from .finance import *
-from .catalog import CATEGORIES, PAYMENTS, SOURCES, canonical_subcategory
+from .catalog import CATEGORIES, PAYMENTS, SOURCES
 
 # Serialize financial operations within a process; PostgreSQL lock coordinates workers.
 mutex = threading.Lock()
@@ -125,7 +125,6 @@ def get(db, cls, id):
 
 
 def valid_expense(p, savings=False):
-    p.subcategory = canonical_subcategory(p.category, p.subcategory)
     if p.date < START:
         fail("Tracking begins November 1, 2026")
     allowed = (
@@ -135,11 +134,14 @@ def valid_expense(p, savings=False):
         fail("Choose a predefined category")
     if p.payment_method not in PAYMENTS:
         fail("Choose a predefined payment method")
-    if (
-        p.subcategory
-        and p.category in CATEGORIES
-        and p.subcategory not in CATEGORIES[p.category]
-    ):
+    if allowed is CATEGORIES:
+        valid_classification(p)
+    elif p.subcategory:
+        fail("Savings credits use a source without a subcategory")
+
+
+def valid_classification(p):
+    if p.subcategory not in CATEGORIES.get(p.category, ()):
         fail("Choose a subcategory belonging to the category")
 
 
@@ -243,10 +245,11 @@ def expenses(
     start: date | None = None,
     end: date | None = None,
     category: str = "",
+    subcategory: str = "",
     payment_method: str = "",
     page: int = Query(1, ge=1),
 ):
-    rows = filtered(expense_rows(db), search, start, end, category, payment_method)
+    rows = filtered(expense_rows(db), search, start, end, category, payment_method, subcategory=subcategory)
     return {
         "items": rows[(page - 1) * 20 : page * 20],
         "total": len(rows),
@@ -255,7 +258,7 @@ def expenses(
     }
 
 
-def filtered(rows, search, start, end, category, payment_method, type=""):
+def filtered(rows, search, start, end, category, payment_method, type="", subcategory=""):
     return [
         r
         for r in rows
@@ -276,6 +279,7 @@ def filtered(rows, search, start, end, category, payment_method, type=""):
         and (not start or r["date"] >= start)
         and (not end or r["date"] <= end)
         and (not category or r["category"] == category)
+        and (not subcategory or r["subcategory"] == subcategory)
         and (not payment_method or r["payment_method"] == payment_method)
         and (not type or r["type"] == type)
     ]
@@ -434,13 +438,14 @@ def transactions(
     start: date | None = None,
     end: date | None = None,
     category: str = "",
+    subcategory: str = "",
     payment_method: str = "",
     type: str = "",
     page: int = Query(1, ge=1),
 ):
     rows = list(
         reversed(
-            filtered(ledger(db), search, start, end, category, payment_method, type)
+            filtered(ledger(db), search, start, end, category, payment_method, type, subcategory)
         )
     )
     return {
@@ -550,6 +555,7 @@ def add_subscription(p: SubscriptionIn, db: DB):
         fail("Subscription tracking begins November 1, 2026")
     if p.payment_method not in PAYMENTS or p.category not in CATEGORIES:
         fail("Invalid category or payment method")
+    valid_classification(p)
     if p.first_payment_made and p.start_date > today():
         fail("An already paid charge cannot have a future date")
     first_due = p.first_billing_date or p.start_date + timedelta(days=30)
@@ -594,6 +600,7 @@ def add_subscription(p: SubscriptionIn, db: DB):
                 amount=s.amount,
                 date=s.start_date,
                 category=s.category,
+                subcategory=s.subcategory,
                 payment_method=s.payment_method,
                 notes=s.name,
             )
@@ -621,6 +628,7 @@ def add_subscription(p: SubscriptionIn, db: DB):
 def edit_subscription(id: int, p: SubscriptionEdit, db: DB):
     if p.category not in CATEGORIES or p.payment_method not in PAYMENTS:
         fail("Invalid category or payment method")
+    valid_classification(p)
     process_subscriptions(db, today())
     return record(apply(get(db, Subscription, id), p.model_dump()))
 

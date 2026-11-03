@@ -30,6 +30,7 @@ export function SubscriptionEditor({
       subscription?.start_date ||
       (today < TRACKING_START ? TRACKING_START : today),
     category: subscription?.category || "Subscriptions",
+    subcategory: subscription?.subcategory || "",
     payment_method:
       subscription?.payment_method ||
       preferences?.default_payment_method ||
@@ -47,6 +48,7 @@ export function SubscriptionEditor({
     setValue({
       ...value,
       [key]: v,
+      ...(key === "category" ? { subcategory: "" } : {}),
       ...(key === "start_date" || key === "first_payment_made"
         ? {
             first_billing_date: afterDays(
@@ -76,6 +78,7 @@ export function SubscriptionEditor({
                     name: value.name,
                     amount: value.amount,
                     category: value.category,
+                    subcategory: value.subcategory,
                     payment_method: value.payment_method,
                   })
                 : await subscriptionService.create(value);
@@ -113,7 +116,34 @@ export function SubscriptionEditor({
               value={value.category}
               onChange={(e) => change("category", e.target.value)}
             >
+              {!catalog?.categories[value.category] && (
+                <option value={value.category} disabled>
+                  {value.category} (historical)
+                </option>
+              )}
               {Object.keys(catalog?.categories || {}).map((c) => (
+                <option key={c}>{c}</option>
+              ))}
+            </select>
+          </Field>
+          <Field label="Subcategory">
+            <select
+              required
+              value={value.subcategory}
+              onChange={(e) => change("subcategory", e.target.value)}
+            >
+              <option value="" disabled>
+                Choose a subcategory
+              </option>
+              {value.subcategory &&
+                !catalog?.categories[value.category]?.includes(
+                  value.subcategory,
+                ) && (
+                  <option value={value.subcategory} disabled>
+                    {value.subcategory} (review required)
+                  </option>
+                )}
+              {catalog?.categories[value.category]?.map((c) => (
                 <option key={c}>{c}</option>
               ))}
             </select>

@@ -16,7 +16,11 @@ export function TransactionFilters({
 }) {
   const { catalog } = useWorkspace();
   const change = (key: keyof Filters, v: string) =>
-    onChange({ ...value, [key]: v });
+    onChange({
+      ...value,
+      [key]: v,
+      ...(key === "category" ? { subcategory: "" } : {}),
+    });
   return (
     <div className="filters">
       <label className="search">
@@ -69,6 +73,18 @@ export function TransactionFilters({
           <option key={c}>{c}</option>
         ))}
       </select>
+      {Boolean(catalog?.categories[value.category]?.length) && (
+        <select
+          aria-label="Filter subcategory"
+          value={value.subcategory}
+          onChange={(e) => change("subcategory", e.target.value)}
+        >
+          <option value="">All subcategories</option>
+          {catalog?.categories[value.category]?.map((c) => (
+            <option key={c}>{c}</option>
+          ))}
+        </select>
+      )}
       <select
         aria-label="Filter payment method"
         value={value.payment_method}
