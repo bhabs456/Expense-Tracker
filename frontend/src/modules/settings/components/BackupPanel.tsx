@@ -16,6 +16,10 @@ export function BackupPanel() {
     <section className="panel">
       <h2>Backup & restore</h2>
       <p className="muted">
+        Automatic backups run every Sunday at 5:00 PM India time. If Paisa is
+        off, it saves one catch-up backup the next time it runs.
+      </p>
+      <p className="muted">
         Download a complete copy of your records. Keep a copy somewhere safe on
         your device.
       </p>
@@ -101,7 +105,9 @@ export function BackupList() {
   return (
     <section className="panel backup-list">
       <h2>Local backup files</h2>
-      <p className="muted">Includes safety backups made before restore.</p>
+      <p className="muted">
+        Includes automatic, manual, and pre-restore safety backups.
+      </p>
       {error ? (
         <ErrorState message={error} retry={reload} />
       ) : data?.length ? (
@@ -112,7 +118,10 @@ export function BackupList() {
                 <Download size={15} />
                 {b.name}
               </a>
-              <small>{Math.ceil(b.bytes / 1024)} KB</small>
+              <small>
+                {b.name.startsWith("auto-") && "Weekly · "}
+                {Math.ceil(b.bytes / 1024)} KB
+              </small>
             </li>
           ))}
         </ul>

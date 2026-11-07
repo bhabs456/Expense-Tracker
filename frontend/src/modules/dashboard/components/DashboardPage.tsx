@@ -3,7 +3,7 @@ import { Alert } from "@/components/ui/Alert";
 import { ProgressBar } from "@/components/ui/ProgressBar";
 import { useState } from "react";
 import Link from "next/link";
-import { Plus, PiggyBank, ArrowUpRight } from "lucide-react";
+import { Plus, PiggyBank, ArrowUpRight, CalendarRange } from "lucide-react";
 import {
   PageHeader,
   StatCard,
@@ -14,7 +14,7 @@ import { MonthPicker } from "@/components/shared/MonthPicker";
 import { CategoryChart } from "@/components/shared/Charts";
 import { ExpenseRecords } from "@/modules/expenses";
 import { useResource } from "@/hooks/useResource";
-import { defaultMonth, money } from "@/utils/format";
+import { defaultMonth, money, weekLabel } from "@/utils/format";
 import { useWorkspace } from "@/components/layouts/WorkspaceProvider";
 import { dashboardService } from "../services/dashboardService";
 export function DashboardPage() {
@@ -78,6 +78,21 @@ export function DashboardPage() {
               You can continue recording expenses.
             </Alert>
           )}
+          <section className="panel" aria-labelledby="weekly-spending-title">
+            <div className="panel-heading flex-wrap">
+              <h2
+                id="weekly-spending-title"
+                className="flex items-center gap-2"
+              >
+                <CalendarRange size={20} aria-hidden="true" /> Weekly spending
+              </h2>
+              <strong className="text-xl">{money(d.week.spending)}</strong>
+            </div>
+            <p className="muted">
+              {weekLabel(d.week.start, d.week.end)} · Mon–Sat · Regular expenses
+              after refunds
+            </p>
+          </section>
           <div className="dashboard-grid">
             <section className="panel">
               <div className="panel-heading">

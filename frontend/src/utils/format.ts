@@ -34,3 +34,14 @@ export function afterDays(value: string, days: number) {
   const date = new Date(Date.UTC(year, month - 1, day + days));
   return date.toISOString().slice(0, 10);
 }
+
+const shortDate = new Intl.DateTimeFormat("en-IN", {
+  day: "numeric",
+  month: "short",
+  timeZone: "UTC",
+});
+export const dateLabel = (value: string) => shortDate.format(new Date(value));
+export const weekLabel = (start: string, end: string) =>
+  start === end
+    ? `${dateLabel(start)} · Opening Sunday`
+    : shortDate.formatRange(new Date(start), new Date(end));

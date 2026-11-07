@@ -19,6 +19,7 @@ venv/
 .env
 .env.*
 !.env.example
+compose.override.yaml
 backups/
 *.db
 *.sqlite

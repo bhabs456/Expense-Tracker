@@ -8,6 +8,8 @@ from datetime import datetime, date, timezone, timedelta
 from decimal import Decimal
 from typing import Literal
 from uuid import uuid4
+from tempfile import NamedTemporaryFile
+from zoneinfo import ZoneInfo
 from fastapi import Depends, HTTPException, Request
 from fastapi.responses import Response
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
@@ -54,21 +56,43 @@ def serialized(data):
     return json.dumps(data, default=encode, ensure_ascii=False, indent=2).encode()
 
 
-def save(db, prefix):
-    DIRECTORY.mkdir(parents=True, exist_ok=True, mode=0o700)
-    name = f"{prefix}-{datetime.now(timezone.utc):%Y%m%dT%H%M%S}-{uuid4().hex[:8]}.json"
+def write_snapshot(db, name):
     payload = serialized(snapshot(db))
-    fd = os.open(DIRECTORY / name, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
-    with os.fdopen(fd, "wb") as f:
-        f.write(payload)
-        f.flush()
-        os.fsync(f.fileno())
-    dirfd = os.open(DIRECTORY, os.O_RDONLY)
+    DIRECTORY.mkdir(parents=True, exist_ok=True, mode=0o700)
+    temporary = NamedTemporaryFile(dir=DIRECTORY, suffix=".tmp", delete=False)
     try:
-        os.fsync(dirfd)
+        with temporary:
+            temporary.write(payload)
+            temporary.flush()
+            os.fsync(temporary.fileno())
+        os.replace(temporary.name, DIRECTORY / name)
+        dirfd = os.open(DIRECTORY, os.O_RDONLY)
+        try:
+            os.fsync(dirfd)
+        finally:
+            os.close(dirfd)
     finally:
-        os.close(dirfd)
-    return name, payload
+        Path(temporary.name).unlink(missing_ok=True)
+    return payload
+
+
+def save(db, prefix):
+    name = f"{prefix}-{datetime.now(timezone.utc):%Y%m%dT%H%M%S}-{uuid4().hex[:8]}.json"
+    return name, write_snapshot(db, name)
+
+
+def weekly_backup(db, now=None):
+    local = (now or datetime.now(timezone.utc)).astimezone(ZoneInfo("Asia/Kolkata"))
+    sunday = local - timedelta(days=(local.weekday() + 1) % 7)
+    due = sunday.replace(hour=17, minute=0, second=0, microsecond=0)
+    if local < due:
+        due -= timedelta(days=7)
+
+    # A completed file records the slot across restarts. Catch up only the latest
+    # slot because older snapshots cannot be recreated from today's records.
+    name = f"auto-{due.date().isoformat()}.json"
+    if not (DIRECTORY / name).is_file():
+        write_snapshot(db, name)
 
 
 class Envelope(BaseModel):
@@ -224,18 +248,25 @@ def install_backup_routes(app, dependency):
 
     @app.get("/api/v1/backups")
     def list_backups():
-        return (
-            [
-                {"name": p.name, "bytes": p.stat().st_size}
-                for p in sorted(DIRECTORY.glob("*.json"), reverse=True)
-            ]
-            if DIRECTORY.exists()
-            else []
-        )
+        files = []
+        for path in DIRECTORY.glob("*.json"):
+            try:
+                files.append((path.name, path.stat()))
+            except FileNotFoundError:
+                continue
+        return [
+            {"name": name, "bytes": info.st_size}
+            for name, info in sorted(
+                files, key=lambda entry: (entry[1].st_mtime_ns, entry[0]), reverse=True
+            )
+        ]
 
     @app.get("/api/v1/backups/{name}")
     def download(name: str):
-        if not re.fullmatch(r"(?:backup|safety)-\d{8}T\d{6}-[a-f0-9]{8}\.json", name):
+        if not re.fullmatch(
+            r"(?:(?:backup|safety)-\d{8}T\d{6}-[a-f0-9]{8}|auto-\d{4}-\d{2}-\d{2})\.json",
+            name,
+        ):
             raise HTTPException(404, "Backup not found")
         p = DIRECTORY / name
         if not p.is_file():

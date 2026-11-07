@@ -19,6 +19,7 @@ def clock(monkeypatch):
 @pytest.fixture
 def client(tmp_path, monkeypatch, clock):
     monkeypatch.setenv("SUBSCRIPTION_WORKER_DISABLED", "1")
+    monkeypatch.setenv("AUTO_BACKUP_DISABLED", "1")
     url = os.getenv("TEST_DATABASE_URL", f"sqlite:///{tmp_path}/test.db")
     if not url.startswith("sqlite") and not url.rsplit("/", 1)[-1].endswith("_test"):
         raise RuntimeError(
@@ -52,6 +53,7 @@ def client(tmp_path, monkeypatch, clock):
                     db.rollback()
                     raise
 
+    monkeypatch.setattr(main, "SessionLocal", factory)
     main.app.dependency_overrides[main.locked_db] = sessions
     monkeypatch.setattr(backups, "DIRECTORY", tmp_path / "backups")
     with TestClient(main.app) as c:

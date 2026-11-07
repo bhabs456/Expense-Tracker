@@ -65,6 +65,37 @@ def expense_rows(db):
     return rows
 
 
+def week_start(day):
+    # On Sunday, keep showing the Monday–Saturday period that just ended.
+    return day - timedelta(days=day.weekday())
+
+
+def spending_period(rows, start, end):
+    first_tracked_day = max(start, START)
+    return {
+        "start": start,
+        "end": end,
+        "spending": sum(
+            (r["net_amount"] for r in rows if first_tracked_day <= r["date"] <= end),
+            ZERO,
+        ),
+    }
+
+
+def weekly(rows, monday):
+    return spending_period(rows, monday, monday + timedelta(days=5))
+
+
+def weeks_in_month(rows, m, as_of):
+    monday = week_start(m)
+    if m.weekday() == 6:
+        monday += timedelta(days=7)
+    end = min(shift(m) - timedelta(days=1), week_start(as_of))
+    while monday <= end:
+        yield weekly(rows, monday)
+        monday += timedelta(days=7)
+
+
 def monthly(db, m, rows=None):
     m = month(m)
     s = db.scalar(

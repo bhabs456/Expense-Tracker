@@ -4,7 +4,7 @@ import os
 import logging
 from datetime import date, timedelta
 from decimal import Decimal
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, contextmanager
 from typing import Annotated
 from fastapi import FastAPI, Depends, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
@@ -19,12 +19,14 @@ from .models import *
 from .schemas import *
 from .finance import *
 from .catalog import CATEGORIES, PAYMENTS, SOURCES
+from .backups import install_backup_routes, weekly_backup
 
 # Serialize financial operations within a process; PostgreSQL lock coordinates workers.
 mutex = threading.Lock()
 
 
-def locked_db():
+@contextmanager
+def financial_session():
     with mutex:
         with SessionLocal() as db:
             try:
@@ -37,43 +39,53 @@ def locked_db():
                 raise
 
 
+def locked_db():
+    with financial_session() as db:
+        yield db
+
+
 DB = Annotated[Session, Depends(locked_db, scope="function")]
 
 
 def billing_tick():
-    with mutex:
-        with SessionLocal.begin() as db:
-            if db.bind.dialect.name == "postgresql":
-                db.execute(text("SELECT pg_advisory_xact_lock(726202611)"))
-            process_subscriptions(db, today())
+    with financial_session() as db:
+        process_subscriptions(db, today())
+
+
+def backup_tick():
+    with financial_session() as db:
+        weekly_backup(db)
 
 
 @asynccontextmanager
 async def lifespan(app):
     stop = asyncio.Event()
 
-    async def worker():
+    async def worker(tick, label):
         while not stop.is_set():
             try:
-                await asyncio.to_thread(billing_tick)
+                await asyncio.to_thread(tick)
             except Exception:
                 logging.getLogger(__name__).exception(
-                    "Subscription processing failed; retrying in 60 seconds"
+                    "%s failed. Retrying in 60 seconds.", label
                 )
             try:
                 await asyncio.wait_for(stop.wait(), timeout=60)
             except asyncio.TimeoutError:
                 pass
 
-    task = (
-        None
-        if os.getenv("SUBSCRIPTION_WORKER_DISABLED") == "1"
-        else asyncio.create_task(worker())
-    )
-    yield
-    stop.set()
-    if task:
-        await task
+    tasks = []
+    if os.getenv("SUBSCRIPTION_WORKER_DISABLED") != "1":
+        tasks.append(
+            asyncio.create_task(worker(billing_tick, "Subscription processing"))
+        )
+    if os.getenv("AUTO_BACKUP_DISABLED") != "1":
+        tasks.append(asyncio.create_task(worker(backup_tick, "Weekly backup")))
+    try:
+        yield
+    finally:
+        stop.set()
+        await asyncio.gather(*tasks)
 
 
 app = FastAPI(title="Personal Expense Tracker", version="1.0.0", lifespan=lifespan)
@@ -216,25 +228,28 @@ def edit_settings(p: SettingsIn, db: DB):
 
 @app.get("/api/v1/dashboard")
 def dashboard(db: DB, month: str | None = None):
-    process_subscriptions(db, today())
-    d = parse_month(month) if month else max(START, today().replace(day=1))
-    summary = monthly(db, d)
-    rows = [r for r in expense_rows(db) if r["date"].replace(day=1) == d]
+    as_of = today()
+    process_subscriptions(db, as_of)
+    d = parse_month(month) if month else max(START, as_of.replace(day=1))
+    all_rows = expense_rows(db)
+    summary = monthly(db, d, all_rows)
+    rows = [r for r in all_rows if r["date"].replace(day=1) == d]
     cfg = settings(db)
     return {
         **summary,
+        "week": weekly(all_rows, week_start(as_of)),
         "today_spending": sum(
-            (r["net_amount"] for r in rows if r["date"] == today()), ZERO
+            (r["net_amount"] for r in rows if r["date"] == as_of), ZERO
         ),
         "recent": rows[:5],
-        "accumulated_savings": savings_summary(db, today())["accumulated"],
+        "accumulated_savings": savings_summary(db, as_of)["accumulated"],
         "minimum_goal": (
             summary["budget"] * cfg.minimum_savings_percent / 100
         ).quantize(Decimal(".01")),
         "stretch_goal": (
             summary["budget"] * cfg.stretch_savings_percent / 100
         ).quantize(Decimal(".01")),
-        "tracking_open": today() >= START,
+        "tracking_open": as_of >= START,
     }
 
 
@@ -505,9 +520,15 @@ def calendar_data(db: DB, month: str):
 @app.get("/api/v1/analytics")
 def analytics(db: DB, month: str):
     d = parse_month(month)
+    as_of = today()
+    process_subscriptions(db, as_of)
     rows = expense_rows(db)
     return {
         "selected": monthly(db, d, rows),
+        "weeks": list(weeks_in_month(rows, d, as_of)),
+        "opening_sunday": spending_period(rows, d, d)
+        if d.weekday() == 6 and d <= as_of
+        else None,
         "months": [
             monthly(db, m, rows) for m in months(max(START, shift(d, -11)), shift(d))
         ],
@@ -655,8 +676,5 @@ def delete_subscription(id: int, db: DB, confirm: bool = False):
     db.execute(delete(Occurrence).where(Occurrence.subscription_id == id))
     db.delete(s)
     return {"deleted": True}
-
-
-from .backups import install_backup_routes
 
 install_backup_routes(app, locked_db)

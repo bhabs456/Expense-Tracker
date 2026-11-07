@@ -10,7 +10,8 @@ A local-first personal expense tracker with a Next.js frontend, FastAPI backend,
 - A separate savings ledger with credits, debits, historical balances, and recalculation after backdated changes.
 - Subscription renewals every 30 days from an explicit next payment date, selectable actual paid date, catch-up processing, pause/resume, and occurrence tombstones preventing deleted charges from reappearing.
 - Search, combined filters and pagination; Indian rupee formatting; interactive Recharts analytics.
-- Complete JSON backup/restore with a safety backup before replacement.
+- Monday–Saturday spending on the dashboard and in analytics, with opening-Sunday spending shown separately.
+- Weekly automatic JSON backups, manual downloads, and a safety backup before restore.
 - Light/dark themes, responsive floating navigation, mobile drawer, keyboard-accessible date picker, and reduced-motion support.
 
 Regular spending and savings-funded transactions remain separate throughout the application. Money uses Python Decimal and PostgreSQL NUMERIC, with exact decimal strings in backups.
@@ -77,7 +78,11 @@ Migration `0002` adds `first_billing_date` while retaining existing subscription
 
 ## Backup and restore
 
-Settings → Backup now downloads all records as JSON. Restore requires a supported backup, typed confirmation, and a safety backup of current data before replacement. Automatic/local backups are stored in the project's `backups/` folder, which is excluded from Git. Database records live in Docker's persistent PostgreSQL volume.
+Settings → Backup now downloads all records as JSON. Restore requires a supported backup, typed confirmation, and a safety backup of current data before replacement.
+
+The backend saves an automatic backup every Sunday at 5:00 PM India time. If the app was off, it makes one catch-up backup for the latest missed Sunday when it starts. The date in `auto-YYYY-MM-DD.json` identifies the scheduled Sunday. The backup itself records its actual creation time. Settings → Local backup files lists automatic, manual, and safety backups for download.
+
+Backups are stored in the project's `backups/` folder, which is excluded from Git. Database records live in Docker's persistent PostgreSQL volume.
 
 Never commit backups, database files, private environment files, or personal financial data. This repository includes application code and tests only; no personal or QA records are seeded.
 

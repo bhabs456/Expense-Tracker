@@ -84,7 +84,13 @@ export interface MonthlySummary {
   usage_percent: Money;
   categories: CategoryTotal[];
 }
+export interface WeeklySummary {
+  start: string;
+  end: string;
+  spending: Money;
+}
 export interface DashboardSummary extends MonthlySummary {
+  week: WeeklySummary;
   today_spending: Money;
   recent: Expense[];
   accumulated_savings: Money;
@@ -103,6 +109,8 @@ export interface SavingsSummary {
   settings: Preferences;
 }
 export interface AnalyticsSummary {
+  weeks: WeeklySummary[];
+  opening_sunday: WeeklySummary | null;
   selected: MonthlySummary;
   months: MonthlySummary[];
 }

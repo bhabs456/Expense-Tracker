@@ -761,3 +761,117 @@ def test_version_one_backup_preserves_legacy_schedule(client, clock):
     assert listed["next_charge"] == "2026-12-01"
     assert listed["first_payment_status"] == "not_recorded"
     assert ok(client.get(P + "/expenses"))["total"] == 0
+
+
+def test_weekly_spending_excludes_sunday_and_savings_across_months(client, clock):
+    clock[0] = date(2026, 12, 6)  # Sunday
+    ok(stipend(client), 201)
+    expenses = ok(
+        batch(
+            client,
+            exp("123.45", "2026-11-30"),
+            exp("20.00", "2026-12-05"),
+            exp("90.00", "2026-12-06"),
+            exp("25.50", "2026-11-01"),
+        ),
+        201,
+    )["items"]
+    ok(
+        client.post(
+            f"{P}/expenses/{expenses[0]['id']}/refunds",
+            json={"amount": "23.44", "date": "2026-12-06"},
+        ),
+        201,
+    )
+    ok(tx(client, "55.00", type="debit", day="2026-12-05"), 201)
+    expected = {"start": "2026-11-30", "end": "2026-12-05", "spending": 120.01}
+    december_dashboard = dash(client, "2026-12")
+    assert december_dashboard["week"] == expected
+    assert december_dashboard["spending"] == 110
+    assert dash(client, "2026-11")["week"] == expected
+
+    november = ok(client.get(P + "/analytics?month=2026-11"))
+    december = ok(client.get(P + "/analytics?month=2026-12"))
+    assert november["weeks"][0] == {
+        "start": "2026-11-02",
+        "end": "2026-11-07",
+        "spending": 0,
+    }
+    assert november["weeks"][-1] == expected
+    assert december["weeks"] == [expected]
+    assert november["opening_sunday"] == {
+        "start": "2026-11-01",
+        "end": "2026-11-01",
+        "spending": 25.50,
+    }
+    assert december["opening_sunday"] is None
+    assert november["selected"]["spending"] == 125.51
+    assert december["selected"]["spending"] == 110
+
+    clock[0] = date(2026, 12, 7)  # Monday
+    assert dash(client, "2026-12")["week"] == {
+        "start": "2026-12-07",
+        "end": "2026-12-12",
+        "spending": 0,
+    }
+
+
+def test_automatic_backup_sunday_cutoff_and_catch_up(client):
+    from datetime import datetime, timezone
+
+    from app import backups, main
+
+    ok(batch(client, exp("123.45", "2026-11-05")), 201)
+
+    def tick(day, hour, minute):
+        with main.financial_session() as db:
+            backups.weekly_backup(
+                db, datetime(2026, 11, day, hour, minute, tzinfo=timezone.utc)
+            )
+
+    tick(8, 11, 29)  # Sunday 16:59 in India
+    assert [file["name"] for file in ok(client.get(P + "/backups"))] == [
+        "auto-2026-11-01.json"
+    ]
+
+    tick(8, 11, 30)  # Sunday 17:00 in India
+    name = "auto-2026-11-08.json"
+    snapshot = ok(client.get(P + "/backups/" + name))
+    assert snapshot["tables"]["expenses"][0]["amount"] == "123.45"
+    ok(batch(client, exp("12.34", "2026-11-09")), 201)
+    tick(9, 11, 30)
+    assert ok(client.get(P + "/backups/" + name)) == snapshot
+
+    tick(30, 11, 30)  # Catch up after three missed Sundays
+    assert [file["name"] for file in ok(client.get(P + "/backups"))] == [
+        "auto-2026-11-29.json",
+        "auto-2026-11-08.json",
+        "auto-2026-11-01.json",
+    ]
+    ok(
+        client.post(
+            P + "/backups/restore", json={"confirmation": "RESTORE", "backup": snapshot}
+        )
+    )
+    assert ok(client.get(P + "/expenses"))["total"] == 1
+
+
+def test_automatic_backup_retries_after_failed_publish(client, monkeypatch):
+    from datetime import datetime, timezone
+
+    from app import backups, main
+
+    now = datetime(2026, 11, 8, 11, 30, tzinfo=timezone.utc)
+
+    def fail_publish(*_):
+        raise OSError("Disk full")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(backups.os, "replace", fail_publish)
+        with pytest.raises(OSError, match="Disk full"), main.financial_session() as db:
+            backups.weekly_backup(db, now)
+
+    assert list(backups.DIRECTORY.iterdir()) == []
+    with main.financial_session() as db:
+        backups.weekly_backup(db, now)
+    assert ok(client.get(P + "/backups"))[0]["name"] == "auto-2026-11-08.json"
