@@ -31,8 +31,8 @@ export function SubscriptionsPage() {
         </button>
       </PageHeader>
       <Alert variant="info">
-        Track one billing cycle or renew every 30 days. You can change the
-        billing option in Edit.
+        Choose a billing interval when adding a subscription. Track just the
+        first payment or keep recording renewals at that interval.
       </Alert>
       {error ? (
         <ErrorState message={error} retry={reload} />
@@ -57,7 +57,11 @@ export function SubscriptionsPage() {
               <h2>{r.name}</h2>
               <strong>
                 {money(r.amount)}
-                <small>{r.one_cycle ? " one time" : " / 30 days"}</small>
+                <small>
+                  {r.one_cycle
+                    ? " one time"
+                    : ` / ${r.billing_interval_days} days`}
+                </small>
               </strong>
               <p>
                 {r.category}
@@ -66,7 +70,11 @@ export function SubscriptionsPage() {
               </p>
               <dl>
                 <dt>Billing cycle</dt>
-                <dd>{r.one_cycle ? "One billing cycle" : "Every 30 days"}</dd>
+                <dd>
+                  {r.billing_months}{" "}
+                  {r.billing_months === 1 ? "month" : "months"}
+                  {r.one_cycle ? " · One billing cycle" : ""}
+                </dd>
                 <dt>First payment</dt>
                 <dd>
                   {r.first_payment_status === "paid"
@@ -151,7 +159,7 @@ export function SubscriptionsPage() {
         </div>
       ) : (
         <section className="panel">
-          <Empty text="Add a 30-day subscription to track its renewals automatically." />
+          <Empty text="Add a subscription to track its payments automatically." />
         </section>
       )}
       {editor && (

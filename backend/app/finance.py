@@ -168,13 +168,22 @@ def savings_summary(db, today):
     }
 
 
+def billing_interval_days(sub):
+    return sub.billing_months * 30
+
+
+def first_charge_date(sub):
+    return sub.first_billing_date or sub.start_date + timedelta(days=billing_interval_days(sub))
+
+
 def renewal_dates(sub, through):
-    """Fixed 30-day intervals beginning on the explicitly scheduled first charge."""
-    due = sub.first_billing_date or sub.start_date + timedelta(days=30)
+    """Fixed-length intervals beginning on the first scheduled charge."""
+    due = first_charge_date(sub)
+    interval = timedelta(days=billing_interval_days(sub))
     while due <= through:
         if due >= START:
             yield due
-        due += timedelta(days=30)
+        due += interval
 
 
 def process_subscriptions(db, today):
@@ -188,7 +197,7 @@ def process_subscriptions(db, today):
         }
         # Preserve previously processed history when moving from calendar-month billing.
         # Never fill a new 30-day occurrence into an already processed historical period.
-        first_due = sub.first_billing_date or sub.start_date + timedelta(days=30)
+        first_due = first_charge_date(sub)
         processed_through = max(existing, default=first_due - timedelta(days=1))
         initial_paid = (
             sub.start_date < first_due
@@ -227,9 +236,10 @@ def process_subscriptions(db, today):
 def next_charge(sub, today, first_payment_recorded=False):
     if sub.status != "active":
         return None
-    first_due = sub.first_billing_date or sub.start_date + timedelta(days=30)
+    first_due = first_charge_date(sub)
     if today < first_due and not (sub.one_cycle and first_payment_recorded):
         return first_due
     if sub.one_cycle:
         return None
-    return first_due + timedelta(days=30 * ((today - first_due).days // 30 + 1))
+    interval = billing_interval_days(sub)
+    return first_due + timedelta(days=interval * ((today - first_due).days // interval + 1))

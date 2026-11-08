@@ -43,7 +43,7 @@ def encode(v):
 def snapshot(db):
     return {
         "format": "personal-expense-tracker",
-        "version": 4,
+        "version": 5,
         "created_at": datetime.now(timezone.utc).isoformat(),
         "tables": {
             m.__tablename__: [record(r) for r in db.scalars(select(m).order_by(m.id))]
@@ -98,7 +98,7 @@ def weekly_backup(db, now=None):
 class Envelope(BaseModel):
     model_config = ConfigDict(extra="forbid")
     format: Literal["personal-expense-tracker"]
-    version: Literal[1, 2, 3, 4]
+    version: Literal[1, 2, 3, 4, 5]
     created_at: datetime
     tables: dict[str, list[dict]]
 
@@ -138,6 +138,8 @@ def validated(data):
                 raw = {**raw, "subcategory": ""}
             if m == Subscription and env.version < 4 and "one_cycle" not in raw:
                 raw = {**raw, "one_cycle": False}
+            if m == Subscription and env.version < 5 and "billing_months" not in raw:
+                raw = {**raw, "billing_months": 1}
             if set(raw) != fields:
                 raise ValueError(f"Invalid fields in {m.__tablename__}")
             if type(raw["id"]) is not int or raw["id"] < 1 or raw["id"] in seen:
@@ -170,6 +172,8 @@ def validated(data):
                 raise ValueError("Invalid stipend month")
             if m == Subscription and (
                 type(row["one_cycle"]) is not bool
+                or type(row["billing_months"]) is not int
+                or row["billing_months"] not in (1, 3, 6, 9, 12)
                 or row["start_date"] < START
                 or row["first_billing_date"] is None
                 or row["first_billing_date"] < row["start_date"]

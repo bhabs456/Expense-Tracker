@@ -542,7 +542,7 @@ def initial_payment_details(db, sub):
         Occurrence.subscription_id == sub.id, Occurrence.billing_date == sub.start_date))
     payment_date = sub.start_date
     if occurrence is None:
-        payment_date = sub.first_billing_date or sub.start_date + timedelta(days=30)
+        payment_date = first_charge_date(sub)
         occurrence = db.scalar(select(Occurrence).where(
             Occurrence.subscription_id == sub.id, Occurrence.billing_date == payment_date))
     return {
@@ -565,8 +565,8 @@ def subscriptions(db: DB):
             "next_charge": next_charge(
                 s, as_of, first_payment["first_payment_status"] in ("paid", "deleted")
             ),
-            "billing_interval_days": 30,
-            "first_billing_date": s.first_billing_date or s.start_date + timedelta(days=30),
+            "billing_interval_days": billing_interval_days(s),
+            "first_billing_date": first_charge_date(s),
         })
     return result
 
@@ -580,7 +580,7 @@ def add_subscription(p: SubscriptionIn, db: DB):
     valid_classification(p)
     if p.first_payment_made and p.start_date > today():
         fail("An already paid charge cannot have a future date")
-    first_due = p.first_billing_date or p.start_date + timedelta(days=30)
+    first_due = first_charge_date(p)
     if first_due < START or first_due < p.start_date:
         fail("The next payment cannot be before the subscription start date")
     if p.first_payment_made and first_due <= p.start_date:
@@ -592,7 +592,7 @@ def add_subscription(p: SubscriptionIn, db: DB):
         first_billing_date=first_due,
         billing_day=p.start_date.day,
     )
-    # billing_day is retained only for version-1 backup compatibility; renewals use 30-day intervals.
+    # billing_day is retained for legacy backups. Renewals use billing_months.
     db.add(s)
     db.flush()
     if p.first_payment_made:

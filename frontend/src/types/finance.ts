@@ -127,6 +127,7 @@ export interface StipendInput {
 export interface Stipend extends StipendInput {
   id: number;
 }
+export type BillingMonths = 1 | 3 | 6 | 9 | 12;
 export interface SubscriptionInput {
   name: string;
   amount: Money;
@@ -136,6 +137,7 @@ export interface SubscriptionInput {
   payment_method: string;
   first_payment_made: boolean;
   one_cycle: boolean;
+  billing_months: BillingMonths;
   first_billing_date: string;
   existing_expense_id: number | null;
 }
@@ -152,6 +154,7 @@ export interface Subscription extends SubscriptionEdit {
   id: number;
   start_date: string;
   billing_day: number;
+  billing_months: BillingMonths;
   billing_interval_days: number;
   first_billing_date: string;
   first_payment_date: string;

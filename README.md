@@ -8,7 +8,7 @@ A local-first personal expense tracker with a Next.js frontend, FastAPI backend,
 - Stipend-funded monthly budgets: a confirmed receipt funds the month after its earning month using the actual amount received.
 - Atomic expense batches, duplicate warnings, edits, linked refunds, and confirmation before deleting expenses and refunds.
 - A separate savings ledger with credits, debits, historical balances, and recalculation after backdated changes.
-- Subscription renewals every 30 days from an explicit next payment date, selectable actual paid date, catch-up processing, pause/resume, and occurrence tombstones preventing deleted charges from reappearing.
+- Subscription renewals at 1-, 3-, 6-, 9-, or 12-month intervals from an explicit next payment date, selectable actual paid date, catch-up processing, pause/resume, and occurrence tombstones preventing deleted charges from reappearing.
 - Search, combined filters and pagination; Indian rupee formatting; interactive Recharts analytics.
 - Monday–Sunday spending on the dashboard and in analytics, including full weeks that cross month boundaries.
 - Weekly automatic JSON backups, manual downloads, and a safety backup before restore.
@@ -64,7 +64,7 @@ Tracking starts on **1 November 2026**, with zero opening savings. Transactions 
 
 1. Add a stipend with its earning month, expected amount and actual receipt details. Confirm only when received. An October 2026 earning month funds November 2026, even when received late; pending receipts contribute nothing.
 2. Add regular expenses in a batch. Select savings funding for savings-funded purchases, or create a debit in Savings Transactions. Add bonuses/gifts as credits in that ledger.
-3. Set up subscriptions with the next payment date. Choose Not paid yet to begin charging on that date, then every 30 days. Choose Already paid to select the actual paid date and record/link that payment; its next date defaults to payment date + 30 days and can be adjusted.
+3. Set up subscriptions with the next payment date. Choose Not paid yet to begin charging on that date, then at the selected interval. Choose Already paid to record or link the payment on its actual date. The next date defaults to one interval after that payment and can be adjusted.
 4. Adjust savings goals, default payment method and theme in Settings.
 5. Download backups regularly and keep them somewhere safe on your device.
 
@@ -74,7 +74,7 @@ The subscription processor catches up at startup and every 60 seconds; the front
 
 Adding a subscription does not itself create an expense. Example: add an unpaid YouTube Premium subscription on 1 November with the next payment due on 22 November. Expenses are recorded on 22 November, 22 December and 21 January, every 30 days. Already paid records the initial expense on your selected actual payment date, defaulting to today. Due charges catch up when the app runs; this only tracks expenses and does not pay providers.
 
-Migration `0002` adds `first_billing_date` while retaining existing subscriptions' previous start-date + 30-day schedules. Migration `0004` adds an editable **One billing cycle** option. Turning it off resumes future 30-day renewals and keeps previously skipped dates skipped. New backups use version 4 to preserve the option. Versions 1–3 remain restorable.
+Migration `0002` adds `first_billing_date` while retaining existing subscriptions' previous start-date + 30-day schedules. Migration `0004` adds an editable **One billing cycle** option. Turning it off resumes future renewals at the selected interval and keeps previously skipped dates skipped. Migration `0005` adds 1-, 3-, 6-, 9-, and 12-month intervals using 30 days per month. Existing plans keep their 30-day interval. New backups use version 5 to preserve the interval. Versions 1–4 remain restorable.
 
 ## Backup and restore
 

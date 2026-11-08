@@ -9,8 +9,15 @@ import { useMutation } from "@/hooks/useMutation";
 import { ApiError } from "@/services/api";
 import { TRACKING_START } from "@/constants/finance";
 import { money, todayInIndia, afterDays } from "@/utils/format";
-import type { Subscription, SubscriptionInput, Expense } from "@/types/finance";
+import type {
+  BillingMonths,
+  Subscription,
+  SubscriptionInput,
+  Expense,
+} from "@/types/finance";
 import { subscriptionService } from "../services/subscriptionService";
+const BILLING_MONTHS: readonly BillingMonths[] = [1, 3, 6, 9, 12];
+
 export function SubscriptionEditor({
   subscription,
   onClose,
@@ -37,31 +44,39 @@ export function SubscriptionEditor({
       "UPI",
     first_payment_made: false,
     one_cycle: subscription?.one_cycle ?? false,
+    billing_months: subscription?.billing_months ?? 1,
     first_billing_date:
       subscription?.first_billing_date ||
       afterDays(today < TRACKING_START ? TRACKING_START : today, 30),
     existing_expense_id: null,
   });
+  const intervalDays = value.billing_months * 30;
   const paidSingleCycle = value.one_cycle && value.first_payment_made;
   const change = <K extends keyof SubscriptionInput>(
     key: K,
     v: SubscriptionInput[K],
   ) => {
-    setValue({
-      ...value,
-      [key]: v,
-      ...(key === "category" ? { subcategory: "" } : {}),
-      ...(key === "start_date" || key === "first_payment_made"
-        ? {
-            first_billing_date: afterDays(
-              key === "start_date" ? String(v) : value.start_date,
-              30,
-            ),
-          }
-        : {}),
-      ...(key !== "existing_expense_id" ? { existing_expense_id: null } : {}),
-    });
-    if (key !== "existing_expense_id") setCandidates([]);
+    const next = { ...value, [key]: v };
+    if (key === "category") next.subcategory = "";
+    const updateDefaultRenewal =
+      key === "billing_months" &&
+      value.first_payment_made &&
+      value.first_billing_date === afterDays(value.start_date, intervalDays);
+    if (
+      key === "start_date" ||
+      key === "first_payment_made" ||
+      updateDefaultRenewal
+    ) {
+      next.first_billing_date = afterDays(
+        next.start_date,
+        next.first_payment_made ? next.billing_months * 30 : 30,
+      );
+    }
+    if (key !== "existing_expense_id") {
+      next.existing_expense_id = null;
+      setCandidates([]);
+    }
+    setValue(next);
     setDirty(true);
   };
   return (
@@ -87,7 +102,7 @@ export function SubscriptionEditor({
                 : await subscriptionService.create({
                     ...value,
                     first_billing_date: paidSingleCycle
-                      ? afterDays(value.start_date, 30)
+                      ? afterDays(value.start_date, intervalDays)
                       : value.first_billing_date,
                   });
             } catch (e) {
@@ -108,7 +123,7 @@ export function SubscriptionEditor({
               onChange={(e) => change("name", e.target.value)}
             />
           </Field>
-          <Field label="Amount per 30 days (₹)">
+          <Field label="Amount per billing cycle (₹)">
             <AmountInput
               required
 
@@ -169,6 +184,25 @@ export function SubscriptionEditor({
         </div>
         <fieldset className="payment-choice">
           <legend>Billing cycle</legend>
+          <Field label="Billing interval">
+            <select
+              disabled={Boolean(subscription)}
+              value={value.billing_months}
+              onChange={(e) =>
+                change(
+                  "billing_months",
+                  Number(e.target.value) as BillingMonths,
+                )
+              }
+            >
+              {BILLING_MONTHS.map((months) => (
+                <option key={months} value={months}>
+                  {months} {months === 1 ? "month" : "months"} ({months * 30}{" "}
+                  days)
+                </option>
+              ))}
+            </select>
+          </Field>
           <label>
             <input
               type="checkbox"
@@ -180,7 +214,7 @@ export function SubscriptionEditor({
               <b>One billing cycle</b>
               <small>
                 Record the first payment only. Turn this off in Edit to allow
-                future 30-day renewals.
+                future renewals at this interval.
               </small>
             </span>
           </label>
@@ -264,7 +298,7 @@ export function SubscriptionEditor({
             <small>
               {value.one_cycle
                 ? "No automatic renewal."
-                : `Then ${afterDays(value.first_billing_date, 30)}, continuing every 30 days.`}
+                : `Then ${afterDays(value.first_billing_date, intervalDays)}, continuing every ${intervalDays} days.`}
             </small>
           </div>
         )}
@@ -273,7 +307,9 @@ export function SubscriptionEditor({
             <span>Next expected payment</span>
             <b>{subscription.next_charge || "No active renewal"}</b>
             {!value.one_cycle && (
-              <small>Every 30 days from the first scheduled charge.</small>
+              <small>
+                Every {intervalDays} days from the first scheduled charge.
+              </small>
             )}
           </div>
         )}

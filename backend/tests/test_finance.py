@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal
 from concurrent.futures import ThreadPoolExecutor
 import pytest
@@ -732,18 +732,24 @@ def test_first_upcoming_payment_tombstone_is_preserved(client, clock):
     assert [e["date"] for e in ok(client.get(P + "/expenses"))["items"]] == ["2026-12-22"]
 
 
-def test_version_three_backup_retains_explicit_billing_schedule(client, clock):
+@pytest.mark.parametrize("version", [3, 4])
+def test_legacy_backup_retains_explicit_billing_schedule(client, clock, version):
     clock[0] = date(2026, 11, 1)
     ok(client.post(P + "/subscriptions", json={
         "name": "YT", "subcategory": "Streaming", "amount": "149", "start_date": "2026-11-01",
         "first_billing_date": "2026-11-22", "payment_method": "UPI",
     }), 201)
     backup = ok(client.post(P + "/backups"))
-    assert backup["version"] == 4
-    backup["version"] = 3
-    backup["tables"]["subscriptions"][0].pop("one_cycle")
+    assert backup["version"] == 5
+    backup["version"] = version
+    subscription = backup["tables"]["subscriptions"][0]
+    subscription.pop("billing_months")
+    if version == 3:
+        subscription.pop("one_cycle")
     ok(client.post(P + "/backups/restore", json={"confirmation": "RESTORE", "backup": backup}))
-    assert ok(client.get(P + "/subscriptions"))[0]["next_charge"] == "2026-11-22"
+    restored = ok(client.get(P + "/subscriptions"))[0]
+    assert restored["next_charge"] == "2026-11-22"
+    assert restored["billing_months"] == 1
     assert ok(client.get(P + "/expenses"))["total"] == 0
 
 
@@ -759,6 +765,7 @@ def test_version_one_backup_preserves_legacy_schedule(client, clock):
         subscription.pop("first_billing_date")
         subscription.pop("subcategory")
         subscription.pop("one_cycle")
+        subscription.pop("billing_months")
     ok(client.post(P + "/backups/restore", json={"confirmation": "RESTORE", "backup": backup}))
     listed = ok(client.get(P + "/subscriptions"))[0]
     assert listed["next_charge"] == "2026-12-01"
@@ -924,3 +931,63 @@ def test_one_cycle_scheduled_first_payment_survives_backup(client, clock, cancel
     assert listed["next_charge"] is None
     expenses = ok(client.get(P + "/expenses"))["items"]
     assert [e["date"] for e in expenses] == ([] if cancel_before_charge else ["2026-11-22"])
+
+
+@pytest.mark.parametrize("billing_months", [3, 6, 9, 12])
+@pytest.mark.parametrize("one_cycle", [False, True])
+def test_long_billing_cycles_track_paid_and_renewal_dates(
+    client, clock, billing_months, one_cycle
+):
+    paid = date(2026, 11, 8)
+    interval = timedelta(days=billing_months * 30)
+    due = paid + interval
+    clock[0] = paid
+    ok(sub(client, paid.isoformat(), billing_months=billing_months, one_cycle=one_cycle), 201)
+    plan = ok(client.get(P + "/subscriptions"))[0]
+    assert plan["billing_interval_days"] == interval.days
+    assert plan["next_charge"] == (None if one_cycle else due.isoformat())
+
+    clock[0] = due - timedelta(days=1)
+    assert ok(client.post(P + "/subscriptions/process"))["generated"] == 0
+    clock[0] = due
+    assert ok(client.post(P + "/subscriptions/process"))["generated"] == int(not one_cycle)
+    assert ok(client.post(P + "/subscriptions/process"))["generated"] == 0
+    assert ok(client.get(P + "/expenses"))["total"] == (1 if one_cycle else 2)
+    assert ok(client.get(P + "/subscriptions"))[0]["next_charge"] == (
+        None if one_cycle else (due + interval).isoformat()
+    )
+
+
+def test_scheduled_six_month_plan_keeps_interval_when_one_cycle_is_lifted(client, clock):
+    clock[0] = date(2026, 11, 8)
+    due = date(2026, 11, 22)
+    plan = ok(
+        client.post(P + "/subscriptions", json={
+            "name": "Six-month plan",
+            "subcategory": "Streaming",
+            "amount": "199.99",
+            "payment_method": "UPI",
+            "start_date": clock[0].isoformat(),
+            "first_billing_date": due.isoformat(),
+            "billing_months": 6,
+            "one_cycle": True,
+        }),
+        201,
+    )
+    assert ok(client.get(P + "/subscriptions"))[0]["next_charge"] == due.isoformat()
+    clock[0] = due + timedelta(days=181)
+    backup = ok(client.post(P + "/backups"))
+    ok(client.post(P + "/backups/restore", json={"confirmation": "RESTORE", "backup": backup}))
+    details = {
+        field: plan[field]
+        for field in ("name", "amount", "category", "subcategory", "payment_method")
+    }
+    ok(client.patch(f"{P}/subscriptions/{plan['id']}", json={**details, "one_cycle": False}))
+    restored = ok(client.get(P + "/subscriptions"))[0]
+    assert restored["billing_months"] == 6
+    assert restored["next_charge"] == (due + timedelta(days=360)).isoformat()
+    assert [e["date"] for e in ok(client.get(P + "/expenses"))["items"]] == [due.isoformat()]
+
+
+def test_subscription_rejects_unsupported_billing_interval(client):
+    assert sub(client, billing_months=2).status_code == 422

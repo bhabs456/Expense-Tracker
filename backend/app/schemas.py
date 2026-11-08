@@ -81,6 +81,7 @@ class SubscriptionIn(Strict):
     category: str = Field(default="Subscriptions", min_length=1, max_length=100)
     first_payment_made: bool = False
     one_cycle: bool = False
+    billing_months: Literal[1, 3, 6, 9, 12] = 1
     first_billing_date: date | None = None
     existing_expense_id: int | None = None
     subcategory: str = Field(default="", max_length=100)
