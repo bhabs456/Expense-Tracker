@@ -526,9 +526,6 @@ def analytics(db: DB, month: str):
     return {
         "selected": monthly(db, d, rows),
         "weeks": list(weeks_in_month(rows, d, as_of)),
-        "opening_sunday": spending_period(rows, d, d)
-        if d.weekday() == 6 and d <= as_of
-        else None,
         "months": [
             monthly(db, m, rows) for m in months(max(START, shift(d, -11)), shift(d))
         ],
@@ -557,17 +554,21 @@ def initial_payment_details(db, sub):
 
 @app.get("/api/v1/subscriptions")
 def subscriptions(db: DB):
-    process_subscriptions(db, today())
-    return [
-        {
+    as_of = today()
+    process_subscriptions(db, as_of)
+    result = []
+    for s in db.scalars(select(Subscription).order_by(Subscription.id.desc())):
+        first_payment = initial_payment_details(db, s)
+        result.append({
             **record(s),
-            "next_charge": next_charge(s, today()),
+            **first_payment,
+            "next_charge": next_charge(
+                s, as_of, first_payment["first_payment_status"] in ("paid", "deleted")
+            ),
             "billing_interval_days": 30,
             "first_billing_date": s.first_billing_date or s.start_date + timedelta(days=30),
-            **initial_payment_details(db, s),
-        }
-        for s in db.scalars(select(Subscription).order_by(Subscription.id.desc()))
-    ]
+        })
+    return result
 
 
 @app.post("/api/v1/subscriptions", status_code=201)
@@ -636,7 +637,7 @@ def add_subscription(p: SubscriptionIn, db: DB):
                 expense_id=e.id,
             )
         )
-    elif p.first_billing_date is None:
+    elif p.first_billing_date is None and not p.one_cycle:
         # Old clients retain their previous skipped-initial-payment semantics.
         db.add(
             Occurrence(subscription_id=s.id, billing_date=s.start_date, state="skipped")
@@ -650,8 +651,13 @@ def edit_subscription(id: int, p: SubscriptionEdit, db: DB):
     if p.category not in CATEGORIES or p.payment_method not in PAYMENTS:
         fail("Invalid category or payment method")
     valid_classification(p)
+    subscription = get(db, Subscription, id)
+    # Apply a new limit before processing due charges. Process skipped dates
+    # under the old limit before lifting it, so they stay skipped.
+    if p.one_cycle:
+        subscription.one_cycle = True
     process_subscriptions(db, today())
-    return record(apply(get(db, Subscription, id), p.model_dump()))
+    return record(apply(subscription, p.model_dump(exclude_none=True)))
 
 
 @app.post("/api/v1/subscriptions/{id}/{action}")

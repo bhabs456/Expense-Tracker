@@ -66,30 +66,24 @@ def expense_rows(db):
 
 
 def week_start(day):
-    # On Sunday, keep showing the Monday–Saturday period that just ended.
     return day - timedelta(days=day.weekday())
 
 
-def spending_period(rows, start, end):
-    first_tracked_day = max(start, START)
+def weekly(rows, monday):
+    sunday = monday + timedelta(days=6)
+    first_tracked_day = max(monday, START)
     return {
-        "start": start,
-        "end": end,
+        "start": monday,
+        "end": sunday,
         "spending": sum(
-            (r["net_amount"] for r in rows if first_tracked_day <= r["date"] <= end),
+            (r["net_amount"] for r in rows if first_tracked_day <= r["date"] <= sunday),
             ZERO,
         ),
     }
 
 
-def weekly(rows, monday):
-    return spending_period(rows, monday, monday + timedelta(days=5))
-
-
 def weeks_in_month(rows, m, as_of):
     monday = week_start(m)
-    if m.weekday() == 6:
-        monday += timedelta(days=7)
     end = min(shift(m) - timedelta(days=1), week_start(as_of))
     while monday <= end:
         yield weekly(rows, monday)
@@ -187,7 +181,7 @@ def process_subscriptions(db, today):
     count = 0
     for sub in db.scalars(select(Subscription)):
         existing = {
-            o.billing_date
+            o.billing_date: o.state
             for o in db.scalars(
                 select(Occurrence).where(Occurrence.subscription_id == sub.id)
             )
@@ -196,11 +190,16 @@ def process_subscriptions(db, today):
         # Never fill a new 30-day occurrence into an already processed historical period.
         first_due = sub.first_billing_date or sub.start_date + timedelta(days=30)
         processed_through = max(existing, default=first_due - timedelta(days=1))
+        initial_paid = (
+            sub.start_date < first_due
+            and existing.get(sub.start_date) in ("generated", "deleted")
+        )
         for d in renewal_dates(sub, today):
             if d in existing or d <= processed_through:
                 continue
             e = None
-            if sub.status == "active":
+            within_cycle = not sub.one_cycle or (d == first_due and not initial_paid)
+            if sub.status == "active" and within_cycle:
                 e = Expense(
                     amount=sub.amount,
                     date=d,
@@ -225,10 +224,12 @@ def process_subscriptions(db, today):
     return count
 
 
-def next_charge(sub, today):
+def next_charge(sub, today, first_payment_recorded=False):
     if sub.status != "active":
         return None
     first_due = sub.first_billing_date or sub.start_date + timedelta(days=30)
-    if today < first_due:
+    if today < first_due and not (sub.one_cycle and first_payment_recorded):
         return first_due
+    if sub.one_cycle:
+        return None
     return first_due + timedelta(days=30 * ((today - first_due).days // 30 + 1))

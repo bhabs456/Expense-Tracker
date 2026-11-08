@@ -110,7 +110,6 @@ export interface SavingsSummary {
 }
 export interface AnalyticsSummary {
   weeks: WeeklySummary[];
-  opening_sunday: WeeklySummary | null;
   selected: MonthlySummary;
   months: MonthlySummary[];
 }
@@ -136,12 +135,18 @@ export interface SubscriptionInput {
   subcategory: string;
   payment_method: string;
   first_payment_made: boolean;
+  one_cycle: boolean;
   first_billing_date: string;
   existing_expense_id: number | null;
 }
 export type SubscriptionEdit = Pick<
   SubscriptionInput,
-  "name" | "amount" | "category" | "subcategory" | "payment_method"
+  | "name"
+  | "amount"
+  | "category"
+  | "subcategory"
+  | "payment_method"
+  | "one_cycle"
 >;
 export interface Subscription extends SubscriptionEdit {
   id: number;

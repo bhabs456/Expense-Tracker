@@ -31,9 +31,8 @@ export function SubscriptionsPage() {
         </button>
       </PageHeader>
       <Alert variant="info">
-        Choose the next payment date. Charges repeat every 30 days from that
-        date. Missed charges catch up automatically; paused periods stay
-        skipped.
+        Track one billing cycle or renew every 30 days. You can change the
+        billing option in Edit.
       </Alert>
       {error ? (
         <ErrorState message={error} retry={reload} />
@@ -58,7 +57,7 @@ export function SubscriptionsPage() {
               <h2>{r.name}</h2>
               <strong>
                 {money(r.amount)}
-                <small> / 30 days</small>
+                <small>{r.one_cycle ? " one time" : " / 30 days"}</small>
               </strong>
               <p>
                 {r.category}
@@ -67,7 +66,7 @@ export function SubscriptionsPage() {
               </p>
               <dl>
                 <dt>Billing cycle</dt>
-                <dd>Every 30 days</dd>
+                <dd>{r.one_cycle ? "One billing cycle" : "Every 30 days"}</dd>
                 <dt>First payment</dt>
                 <dd>
                   {r.first_payment_status === "paid"
@@ -79,11 +78,18 @@ export function SubscriptionsPage() {
                         : "Not recorded"}
                 </dd>
                 <dt>Next charge</dt>
-                <dd>{r.next_charge || "—"}</dd>
+                <dd>
+                  {r.next_charge ||
+                    (r.one_cycle && r.status === "active" ? "No renewal" : "—")}
+                </dd>
                 <dt>First payment date</dt>
                 <dd>{r.first_payment_date}</dd>
-                <dt>First scheduled charge</dt>
-                <dd>{r.first_billing_date}</dd>
+                {!r.one_cycle && (
+                  <>
+                    <dt>First scheduled charge</dt>
+                    <dd>{r.first_billing_date}</dd>
+                  </>
+                )}
               </dl>
               <div className="subscription-actions">
                 <button onClick={() => setEditor(r)}>Edit</button>

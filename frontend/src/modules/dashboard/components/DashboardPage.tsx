@@ -89,7 +89,7 @@ export function DashboardPage() {
               <strong className="text-xl">{money(d.week.spending)}</strong>
             </div>
             <p className="muted">
-              {weekLabel(d.week.start, d.week.end)} · Mon–Sat · Regular expenses
+              {weekLabel(d.week.start, d.week.end)} · Mon–Sun · Regular expenses
               after refunds
             </p>
           </section>

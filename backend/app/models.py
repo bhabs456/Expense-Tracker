@@ -81,6 +81,7 @@ class Subscription(Base):
     subcategory: Mapped[str] = mapped_column(String(100), default="")
     payment_method: Mapped[str] = mapped_column(String(100))
     status: Mapped[str] = mapped_column(String(20), default="active")
+    one_cycle: Mapped[bool] = mapped_column(Boolean, default=False)
     __table_args__ = (
         CheckConstraint(
             "amount > 0 AND billing_day BETWEEN 1 AND 31 AND status IN ('active','paused','canceled')"

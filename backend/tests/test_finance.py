@@ -732,14 +732,16 @@ def test_first_upcoming_payment_tombstone_is_preserved(client, clock):
     assert [e["date"] for e in ok(client.get(P + "/expenses"))["items"]] == ["2026-12-22"]
 
 
-def test_version_two_backup_retains_explicit_billing_schedule(client, clock):
+def test_version_three_backup_retains_explicit_billing_schedule(client, clock):
     clock[0] = date(2026, 11, 1)
     ok(client.post(P + "/subscriptions", json={
         "name": "YT", "subcategory": "Streaming", "amount": "149", "start_date": "2026-11-01",
         "first_billing_date": "2026-11-22", "payment_method": "UPI",
     }), 201)
     backup = ok(client.post(P + "/backups"))
-    assert backup["version"] == 3
+    assert backup["version"] == 4
+    backup["version"] = 3
+    backup["tables"]["subscriptions"][0].pop("one_cycle")
     ok(client.post(P + "/backups/restore", json={"confirmation": "RESTORE", "backup": backup}))
     assert ok(client.get(P + "/subscriptions"))[0]["next_charge"] == "2026-11-22"
     assert ok(client.get(P + "/expenses"))["total"] == 0
@@ -756,6 +758,7 @@ def test_version_one_backup_preserves_legacy_schedule(client, clock):
     for subscription in backup["tables"]["subscriptions"]:
         subscription.pop("first_billing_date")
         subscription.pop("subcategory")
+        subscription.pop("one_cycle")
     ok(client.post(P + "/backups/restore", json={"confirmation": "RESTORE", "backup": backup}))
     listed = ok(client.get(P + "/subscriptions"))[0]
     assert listed["next_charge"] == "2026-12-01"
@@ -763,7 +766,7 @@ def test_version_one_backup_preserves_legacy_schedule(client, clock):
     assert ok(client.get(P + "/expenses"))["total"] == 0
 
 
-def test_weekly_spending_excludes_sunday_and_savings_across_months(client, clock):
+def test_weekly_spending_includes_sunday_and_excludes_savings_across_months(client, clock):
     clock[0] = date(2026, 12, 6)  # Sunday
     ok(stipend(client), 201)
     expenses = ok(
@@ -784,7 +787,7 @@ def test_weekly_spending_excludes_sunday_and_savings_across_months(client, clock
         201,
     )
     ok(tx(client, "55.00", type="debit", day="2026-12-05"), 201)
-    expected = {"start": "2026-11-30", "end": "2026-12-05", "spending": 120.01}
+    expected = {"start": "2026-11-30", "end": "2026-12-06", "spending": 210.01}
     december_dashboard = dash(client, "2026-12")
     assert december_dashboard["week"] == expected
     assert december_dashboard["spending"] == 110
@@ -793,25 +796,19 @@ def test_weekly_spending_excludes_sunday_and_savings_across_months(client, clock
     november = ok(client.get(P + "/analytics?month=2026-11"))
     december = ok(client.get(P + "/analytics?month=2026-12"))
     assert november["weeks"][0] == {
-        "start": "2026-11-02",
-        "end": "2026-11-07",
-        "spending": 0,
-    }
-    assert november["weeks"][-1] == expected
-    assert december["weeks"] == [expected]
-    assert november["opening_sunday"] == {
-        "start": "2026-11-01",
+        "start": "2026-10-26",
         "end": "2026-11-01",
         "spending": 25.50,
     }
-    assert december["opening_sunday"] is None
+    assert november["weeks"][-1] == expected
+    assert december["weeks"] == [expected]
     assert november["selected"]["spending"] == 125.51
     assert december["selected"]["spending"] == 110
 
     clock[0] = date(2026, 12, 7)  # Monday
     assert dash(client, "2026-12")["week"] == {
         "start": "2026-12-07",
-        "end": "2026-12-12",
+        "end": "2026-12-13",
         "spending": 0,
     }
 
@@ -875,3 +872,55 @@ def test_automatic_backup_retries_after_failed_publish(client, monkeypatch):
     with main.financial_session() as db:
         backups.weekly_backup(db, now)
     assert ok(client.get(P + "/backups"))[0]["name"] == "auto-2026-11-08.json"
+
+
+def test_one_cycle_paid_then_extended_and_limited_again(client, clock):
+    clock[0] = date(2026, 11, 8)
+    subscription = ok(sub(client, "2026-11-08", one_cycle=True), 201)
+    url = f"{P}/subscriptions/{subscription['id']}"
+    details = {
+        field: subscription[field]
+        for field in ("name", "amount", "category", "subcategory", "payment_method")
+    }
+    assert ok(client.get(P + "/subscriptions"))[0]["next_charge"] is None
+
+    clock[0] = date(2027, 1, 8)
+    ok(client.patch(url, json=details))
+    assert ok(client.get(P + "/subscriptions"))[0]["one_cycle"] is True
+    ok(client.patch(url, json={**details, "one_cycle": False}))
+    assert ok(client.get(P + "/subscriptions"))[0]["next_charge"] == "2027-02-06"
+    assert ok(client.get(P + "/expenses"))["total"] == 1
+
+    clock[0] = date(2027, 2, 6)
+    assert ok(client.post(P + "/subscriptions/process"))["generated"] == 1
+
+    clock[0] = date(2027, 3, 8)  # The next renewal would be due today.
+    ok(client.patch(url, json={**details, "one_cycle": True}))
+    assert ok(client.get(P + "/subscriptions"))[0]["next_charge"] is None
+    assert {e["date"] for e in ok(client.get(P + "/expenses"))["items"]} == {
+        "2026-11-08", "2027-02-06",
+    }
+
+
+@pytest.mark.parametrize("cancel_before_charge", [False, True])
+def test_one_cycle_scheduled_first_payment_survives_backup(client, clock, cancel_before_charge):
+    clock[0] = date(2026, 11, 8)
+    subscription = ok(client.post(P + "/subscriptions", json={
+        "name": "One month", "subcategory": "Streaming", "amount": "149",
+        "start_date": "2026-11-08", "first_billing_date": "2026-11-22",
+        "payment_method": "UPI", "one_cycle": True,
+    }), 201)
+    assert ok(client.get(P + "/subscriptions"))[0]["next_charge"] == "2026-11-22"
+    if cancel_before_charge:
+        ok(client.post(f"{P}/subscriptions/{subscription['id']}/cancel"))
+
+    backup = ok(client.post(P + "/backups"))
+    ok(client.post(P + "/backups/restore", json={"confirmation": "RESTORE", "backup": backup}))
+    clock[0] = date(2027, 2, 22)
+    for _ in range(2):
+        ok(client.post(P + "/subscriptions/process"))
+    listed = ok(client.get(P + "/subscriptions"))[0]
+    assert listed["one_cycle"] is True
+    assert listed["next_charge"] is None
+    expenses = ok(client.get(P + "/expenses"))["items"]
+    assert [e["date"] for e in expenses] == ([] if cancel_before_charge else ["2026-11-22"])

@@ -42,6 +42,4 @@ const shortDate = new Intl.DateTimeFormat("en-IN", {
 });
 export const dateLabel = (value: string) => shortDate.format(new Date(value));
 export const weekLabel = (start: string, end: string) =>
-  start === end
-    ? `${dateLabel(start)} · Opening Sunday`
-    : shortDate.formatRange(new Date(start), new Date(end));
+  shortDate.formatRange(new Date(start), new Date(end));

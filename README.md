@@ -10,7 +10,7 @@ A local-first personal expense tracker with a Next.js frontend, FastAPI backend,
 - A separate savings ledger with credits, debits, historical balances, and recalculation after backdated changes.
 - Subscription renewals every 30 days from an explicit next payment date, selectable actual paid date, catch-up processing, pause/resume, and occurrence tombstones preventing deleted charges from reappearing.
 - Search, combined filters and pagination; Indian rupee formatting; interactive Recharts analytics.
-- Monday–Saturday spending on the dashboard and in analytics, with opening-Sunday spending shown separately.
+- Monday–Sunday spending on the dashboard and in analytics, including full weeks that cross month boundaries.
 - Weekly automatic JSON backups, manual downloads, and a safety backup before restore.
 - Light/dark themes, responsive floating navigation, mobile drawer, keyboard-accessible date picker, and reduced-motion support.
 
@@ -74,7 +74,7 @@ The subscription processor catches up at startup and every 60 seconds; the front
 
 Adding a subscription does not itself create an expense. Example: add an unpaid YouTube Premium subscription on 1 November with the next payment due on 22 November. Expenses are recorded on 22 November, 22 December and 21 January, every 30 days. Already paid records the initial expense on your selected actual payment date, defaulting to today. Due charges catch up when the app runs; this only tracks expenses and does not pay providers.
 
-Migration `0002` adds `first_billing_date` while retaining existing subscriptions' previous start-date + 30-day schedules. JSON backup versions 1–3 remain restorable. New backups use version 3 to include subscription subcategories.
+Migration `0002` adds `first_billing_date` while retaining existing subscriptions' previous start-date + 30-day schedules. Migration `0004` adds an editable **One billing cycle** option. Turning it off resumes future 30-day renewals and keeps previously skipped dates skipped. New backups use version 4 to preserve the option. Versions 1–3 remain restorable.
 
 ## Backup and restore
 

@@ -36,11 +36,13 @@ export function SubscriptionEditor({
       preferences?.default_payment_method ||
       "UPI",
     first_payment_made: false,
+    one_cycle: subscription?.one_cycle ?? false,
     first_billing_date:
       subscription?.first_billing_date ||
       afterDays(today < TRACKING_START ? TRACKING_START : today, 30),
     existing_expense_id: null,
   });
+  const paidSingleCycle = value.one_cycle && value.first_payment_made;
   const change = <K extends keyof SubscriptionInput>(
     key: K,
     v: SubscriptionInput[K],
@@ -80,8 +82,14 @@ export function SubscriptionEditor({
                     category: value.category,
                     subcategory: value.subcategory,
                     payment_method: value.payment_method,
+                    one_cycle: value.one_cycle,
                   })
-                : await subscriptionService.create(value);
+                : await subscriptionService.create({
+                    ...value,
+                    first_billing_date: paidSingleCycle
+                      ? afterDays(value.start_date, 30)
+                      : value.first_billing_date,
+                  });
             } catch (e) {
               if (e instanceof ApiError && e.code === "initial_payment_match")
                 setCandidates(e.candidates);
@@ -159,6 +167,24 @@ export function SubscriptionEditor({
             </select>
           </Field>
         </div>
+        <fieldset className="payment-choice">
+          <legend>Billing cycle</legend>
+          <label>
+            <input
+              type="checkbox"
+              checked={value.one_cycle}
+              disabled={subscription?.status === "canceled"}
+              onChange={(e) => change("one_cycle", e.target.checked)}
+            />
+            <span>
+              <b>One billing cycle</b>
+              <small>
+                Record the first payment only. Turn this off in Edit to allow
+                future 30-day renewals.
+              </small>
+            </span>
+          </label>
+        </fieldset>
         {!subscription && (
           <fieldset className="payment-choice">
             <legend>Payment status</legend>
@@ -202,38 +228,55 @@ export function SubscriptionEditor({
                 />
               </Field>
             )}
-            <Field label="Next payment date">
-              <DatePicker
-                required
-                mode="date"
-                min={
+            {!paidSingleCycle && (
+              <Field
+                label={
                   value.first_payment_made
-                    ? afterDays(value.start_date, 1)
-                    : today < TRACKING_START
-                      ? TRACKING_START
-                      : today
+                    ? "Next payment date"
+                    : "First payment date"
                 }
-                value={value.first_billing_date}
-                onValueChange={(date) => change("first_billing_date", date)}
-              />
-            </Field>
+              >
+                <DatePicker
+                  required
+                  mode="date"
+                  min={
+                    value.first_payment_made
+                      ? afterDays(value.start_date, 1)
+                      : today < TRACKING_START
+                        ? TRACKING_START
+                        : today
+                  }
+                  value={value.first_billing_date}
+                  onValueChange={(date) => change("first_billing_date", date)}
+                />
+              </Field>
+            )}
           </div>
         )}
-        <div className="subscription-schedule">
-          <span>
-            {subscription ? "Next expected payment" : "Next expense date"}
-          </span>
-          <b>
-            {(subscription
-              ? subscription.next_charge
-              : value.first_billing_date) || "No active renewal"}
-          </b>
-          <small>
-            {subscription
-              ? "Every 30 days from the first scheduled charge."
-              : `Then ${afterDays(value.first_billing_date, 30)}, continuing every 30 days.`}
-          </small>
-        </div>
+        {!subscription && (
+          <div className="subscription-schedule">
+            <span>
+              {value.one_cycle ? "Only expense date" : "Next expense date"}
+            </span>
+            <b>
+              {paidSingleCycle ? value.start_date : value.first_billing_date}
+            </b>
+            <small>
+              {value.one_cycle
+                ? "No automatic renewal."
+                : `Then ${afterDays(value.first_billing_date, 30)}, continuing every 30 days.`}
+            </small>
+          </div>
+        )}
+        {subscription && value.one_cycle === subscription.one_cycle && (
+          <div className="subscription-schedule">
+            <span>Next expected payment</span>
+            <b>{subscription.next_charge || "No active renewal"}</b>
+            {!value.one_cycle && (
+              <small>Every 30 days from the first scheduled charge.</small>
+            )}
+          </div>
+        )}
         {candidates.length > 0 && (
           <Field label="Choose the existing initial payment">
             <select
@@ -257,8 +300,8 @@ export function SubscriptionEditor({
           {subscription
             ? "Changes apply only to future renewals. Existing charges stay unchanged."
             : value.first_payment_made
-              ? `One expense is recorded on ${value.start_date}. The next charge uses the date you selected, then repeats every 30 days.`
-              : "No expense is recorded for adding this subscription. The first charge is recorded on the selected payment date, then every 30 days. Due charges catch up when the app runs."}
+              ? `The payment on ${value.start_date} is recorded once.`
+              : "Paisa records the first charge when the selected payment date is due. Due charges catch up when the app runs."}
         </p>
         <div className="form-footer">
           <button type="button" onClick={onClose}>
