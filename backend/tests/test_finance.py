@@ -991,3 +991,26 @@ def test_scheduled_six_month_plan_keeps_interval_when_one_cycle_is_lifted(client
 
 def test_subscription_rejects_unsupported_billing_interval(client):
     assert sub(client, billing_months=2).status_code == 422
+
+
+@pytest.mark.parametrize("saved_name", ["Taxi & Auto", "Taxi / Auto", "Cab & Auto"])
+def test_cab_subcategory_accepts_old_and_current_backups(client, saved_name):
+    transport = ok(client.get(P + "/catalog"))["categories"]["Transport"]
+    assert "Cab & Auto" in transport
+    assert "Taxi & Auto" not in transport
+
+    expense = {**exp("123.45"), "category": "Transport", "subcategory": "Cab & Auto"}
+    created = ok(batch(client, expense), 201)["items"][0]
+    backup = ok(client.post(P + "/backups"))
+    backup["tables"]["expenses"][0]["subcategory"] = saved_name
+    ok(
+        client.post(
+            P + "/backups/restore", json={"confirmation": "RESTORE", "backup": backup}
+        )
+    )
+    items = ok(
+        client.get(P + "/expenses", params={"category": "Transport", "subcategory": "Cab & Auto"})
+    )["items"]
+    assert len(items) == 1
+    assert items[0]["id"] == created["id"]
+    assert items[0]["amount"] == created["amount"]

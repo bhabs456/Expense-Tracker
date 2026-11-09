@@ -25,7 +25,7 @@ from .schemas import (
     SubscriptionEdit,
 )
 from .finance import START, shift, record
-from .catalog import PAYMENTS, SOURCES
+from .catalog import CATEGORIES, PAYMENTS, SOURCES, SUBCATEGORY_RENAMES
 from .taxonomy_v11 import historical_classification, known_historical_pair
 
 DIRECTORY = Path(os.getenv("BACKUP_DIR", "./backups"))
@@ -114,10 +114,15 @@ SCHEMAS = {
 
 
 def restore_classification(model, row):
-    if not known_historical_pair(row["category"], row["subcategory"]):
+    category, subcategory = row["category"], row["subcategory"]
+    if subcategory not in CATEGORIES.get(category, ()) and not known_historical_pair(
+        category, subcategory
+    ):
         raise ValueError("Invalid historical classification")
     if pair := historical_classification(model.__tablename__, row):
-        row["category"], row["subcategory"] = pair
+        category, subcategory = pair
+    row["category"] = category
+    row["subcategory"] = SUBCATEGORY_RENAMES.get((category, subcategory), subcategory)
 
 
 def validated(data):
